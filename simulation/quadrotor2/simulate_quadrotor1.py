@@ -55,9 +55,9 @@ def main(
         enable_plot=False,
         measurement_delay=0,
         lmhe2_pcip_alpha=1./.01,
-        lmhe2_pcip_gradzt=True,
+        lmhe2_pcip_prediction=True,
         lmhe3_pcip_alpha=1./.01,
-        lmhe3_pcip_gradzt=True,
+        lmhe3_pcip_prediction=True,
         lmhe3_l1ao_As=-.1,
         lmhe3_l1ao_omega=50.
     ):
@@ -165,15 +165,15 @@ def main(
             )
         if 'LMHE1' in enabled_estimators:
             lmhe1_pcip_obj = PCIPQP(
-                alpha   = lmhe3_pcip_alpha,
-                ts      = ts,
-                estimate_grad_zt = lmhe3_pcip_gradzt
+                alpha               = lmhe3_pcip_alpha,
+                ts                  = ts,
+                enable_prediction   = lmhe3_pcip_prediction
             )
             lmhe1_l1ao_obj = L1AOQP(
-                ts          = ts,
-                a           = lmhe3_l1ao_As,
-                lpf_omega   = lmhe3_l1ao_omega,
-                estimate_grad_zt = True,
+                ts                  = ts,
+                a                   = lmhe3_l1ao_As,
+                lpf_omega           = lmhe3_l1ao_omega,
+                enable_prediction   = True,
                 # clip_zdot = True
             )
             LMHE1_obj = MHE(
@@ -193,15 +193,15 @@ def main(
             )
         if 'LMHE2' in enabled_estimators:
             lmhe2_pcip_obj = PCIPQP(
-                alpha   = lmhe3_pcip_alpha,
-                ts      = ts,
-                estimate_grad_zt = lmhe3_pcip_gradzt
+                alpha               = lmhe3_pcip_alpha,
+                ts                  = ts,
+                enable_prediction   = lmhe3_pcip_prediction
             )
             lmhe2_l1ao_obj = L1AOQP(
-                ts          = ts,
-                a           = lmhe3_l1ao_As,
-                lpf_omega   = lmhe3_l1ao_omega,
-                estimate_grad_zt = True,
+                ts                  = ts,
+                a                   = lmhe3_l1ao_As,
+                lpf_omega           = lmhe3_l1ao_omega,
+                enable_prediction   = True,
                 # clip_zdot = True
             )
             LMHE2_obj = MHE(
@@ -221,15 +221,15 @@ def main(
             )
         if 'LMHE3' in enabled_estimators:
             lmhe3_pcip_obj = PCIPQP(
-                alpha   = lmhe3_pcip_alpha,
-                ts      = ts,
-                estimate_grad_zt = lmhe3_pcip_gradzt
+                alpha               = lmhe3_pcip_alpha,
+                ts                  = ts,
+                enable_prediction   = lmhe3_pcip_prediction
             )
             lmhe3_l1ao_obj = L1AOQP(
-                ts          = ts,
-                a           = lmhe3_l1ao_As,
-                lpf_omega   = lmhe3_l1ao_omega,
-                estimate_grad_zt = True,
+                ts                  = ts,
+                a                   = lmhe3_l1ao_As,
+                lpf_omega           = lmhe3_l1ao_omega,
+                enable_prediction   = True,
                 # clip_zdot = True
             )
             LMHE3_obj = MHE(
@@ -249,15 +249,15 @@ def main(
             )
         if 'LMHE4' in enabled_estimators:
             lmhe4_pcip_obj = PCIPQP(
-                alpha   = lmhe3_pcip_alpha,
-                ts      = ts,
-                estimate_grad_zt = lmhe3_pcip_gradzt
+                alpha               = lmhe3_pcip_alpha,
+                ts                  = ts,
+                enable_prediction   = lmhe3_pcip_prediction
             )
             lmhe4_l1ao_obj = L1AOQP(
-                ts          = ts,
-                a           = lmhe3_l1ao_As,
-                lpf_omega   = lmhe3_l1ao_omega,
-                estimate_grad_zt = True,
+                ts                  = ts,
+                a                   = lmhe3_l1ao_As,
+                lpf_omega           = lmhe3_l1ao_omega,
+                enable_prediction   = True,
                 # clip_zdot = True
             )
             LMHE4_obj = MHE(
@@ -603,9 +603,9 @@ if __name__ == "__main__":
 
         # ---------------- TV solvers ----------------
         lmhe2_pcip_alpha    = 1./.01,
-        lmhe2_pcip_gradzt   = True,     # False: reduce to Newton method
+        lmhe2_pcip_prediction   = True,     # False: reduce to Newton method
         lmhe3_pcip_alpha    = .5/.01,
-        lmhe3_pcip_gradzt   = True,     # False: reduce to Newton method
+        lmhe3_pcip_prediction   = True,     # False: reduce to Newton method
         lmhe3_l1ao_As       = -.1,
         lmhe3_l1ao_omega    = 150.,
 

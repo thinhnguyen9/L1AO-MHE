@@ -5,9 +5,9 @@ class L1AOQP():
     L1 Adaptive Optimization solver for (unconstrained) Quadratic Program:
         minimize 0.5 z^T H z + f^T z
     """
-    def __init__(self, ts, a, lpf_omega, estimate_grad_zt=False, clip_zdot=False):
+    def __init__(self, ts, a, lpf_omega, enable_prediction=False, clip_zdot=False):
         self.ts = ts
-        self.estimate_grad_zt = estimate_grad_zt
+        self.enable_prediction = enable_prediction
         self.clip_zdot = clip_zdot
         self.zdot_min, self.zdot_max = -10., 10.
 
@@ -81,7 +81,7 @@ class L1AOQP():
             # hess_phi0[:-diff, :-diff] = self.H0.copy()
 
         # Estimate grad_zt_phi by finite difference
-        if self.estimate_grad_zt:
+        if self.enable_prediction:
             grad_zt = (grad_phi - grad_phi0)/self.ts
         else:
             grad_zt = np.zeros_like(z0)

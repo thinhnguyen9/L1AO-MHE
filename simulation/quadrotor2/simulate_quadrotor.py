@@ -52,9 +52,9 @@ def main(
         measurement_delay=0,
         lmhe1_solver="osqp",
         lmhe2_pcip_alpha=1./.01,
-        lmhe2_pcip_gradzt=True,
+        lmhe2_pcip_prediction=True,
         lmhe3_pcip_alpha=1./.01,
-        lmhe3_pcip_gradzt=True,
+        lmhe3_pcip_prediction=True,
         lmhe3_l1ao_As=-.1,
         lmhe3_l1ao_omega=50.,
         xmin=None,
@@ -180,9 +180,9 @@ def main(
             )
         if 'LMHE2' in enabled_estimators:
             lmhe2_pcip_obj = PCIPQP(
-                alpha   = lmhe2_pcip_alpha,
-                ts      = ts,
-                estimate_grad_zt = lmhe2_pcip_gradzt
+                alpha               = lmhe2_pcip_alpha,
+                ts                  = ts,
+                enable_prediction   = lmhe2_pcip_prediction
             )
             LMHE_pcip = MHE(
                 model           = drone_est,
@@ -202,15 +202,15 @@ def main(
             )
         if 'LMHE3' in enabled_estimators:
             lmhe3_pcip_obj = PCIPQP(
-                alpha   = lmhe3_pcip_alpha,
-                ts      = ts,
-                estimate_grad_zt = lmhe3_pcip_gradzt
+                alpha               = lmhe3_pcip_alpha,
+                ts                  = ts,
+                enable_prediction   = lmhe3_pcip_prediction
             )
             lmhe3_l1ao_obj = L1AOQP(
-                ts          = ts,
-                a           = lmhe3_l1ao_As,
-                lpf_omega   = lmhe3_l1ao_omega,
-                estimate_grad_zt = True,
+                ts                  = ts,
+                a                   = lmhe3_l1ao_As,
+                lpf_omega           = lmhe3_l1ao_omega,
+                enable_prediction   = True,
                 # clip_zdot = True
             )
             LMHE_pcip_l1ao = MHE(
@@ -548,13 +548,13 @@ if __name__ == "__main__":
         # xmax = np.array([ 1.,  1., 1.5,  5.,  5.,  1.,  np.pi/3,  np.pi/3,  np.pi/9,  50.,  50.,  50.]),
 
         # ---------------- MHE solvers ----------------
-        lmhe1_solver        = "osqp",   # cvxpy/osqp/cvxopt/pcip/pcip_l1ao
-        lmhe2_pcip_alpha    = 1./.01,
-        lmhe2_pcip_gradzt   = True,     # False: reduce to Newton method
-        lmhe3_pcip_alpha    = .5/.01,
-        lmhe3_pcip_gradzt   = True,     # False: reduce to Newton method
-        lmhe3_l1ao_As       = -.1,
-        lmhe3_l1ao_omega    = 150.,
+        lmhe1_solver            = "osqp",   # cvxpy/osqp/cvxopt/pcip/pcip_l1ao
+        lmhe2_pcip_alpha        = 1./.01,
+        lmhe2_pcip_prediction   = True,     # False: reduce to Newton method
+        lmhe3_pcip_alpha        = .5/.01,
+        lmhe3_pcip_prediction   = True,     # False: reduce to Newton method
+        lmhe3_l1ao_As           = -.1,
+        lmhe3_l1ao_omega        = 150.,
 
         # ---------------- Corner cases ----------------
         # time_varying_measurement_noise = True,

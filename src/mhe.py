@@ -61,10 +61,10 @@ class MHE():
         self.mhe_update = mhe_update
         self.prior_method = prior_method
         if xmin is not None and xmax is not None:
-            self.ineq_constraints = True
+            self.has_inequality_constraints = True
             self.xmin, self.xmax = xmin, xmax
         else:
-            self.ineq_constraints = False
+            self.has_inequality_constraints = False
         self.solver = solver
         A, B, G, C = self.model.linearize(xs, us)
         self.updateModel(A, B, G, C)
@@ -247,7 +247,7 @@ class MHE():
             )
 
             # State constraints
-            if self.ineq_constraints:
+            if self.has_inequality_constraints:
                 # [dx0...dxN] = [x0...xN] - xnom = matA @ z
                 # [x0...xN] in [xmin, xmax]  <=>  matA @ z = [dx0...dxN] in [xmin, xmax] - xnom
                 zmin = np.kron(np.ones((N+1,)), self.xmin) - xnom.flatten()
@@ -294,9 +294,9 @@ class MHE():
                 prob.setup(
                     P=sparse.csc_matrix(H),
                     q=f,
-                    A=sparse.csc_matrix(matA) if self.ineq_constraints else None,
-                    l=zmin if self.ineq_constraints else None,
-                    u=zmax if self.ineq_constraints else None,
+                    A=sparse.csc_matrix(matA) if self.has_inequality_constraints else None,
+                    l=zmin if self.has_inequality_constraints else None,
+                    u=zmax if self.has_inequality_constraints else None,
                     warm_start=True, verbose=False
                 )
                 res = prob.solve()
@@ -308,8 +308,8 @@ class MHE():
                 solvers.options['show_progress'] = False
                 sol = solvers.qp(
                     P=matrix(H), q=matrix(f),
-                    G=matrix(np.vstack((-matA, matA))) if self.ineq_constraints else None,
-                    h=matrix(np.hstack((-zmin, zmax))) if self.ineq_constraints else None
+                    G=matrix(np.vstack((-matA, matA))) if self.has_inequality_constraints else None,
+                    h=matrix(np.hstack((-zmin, zmax))) if self.has_inequality_constraints else None
                 )
                 z = np.array(sol['x']).flatten()
             
@@ -366,8 +366,14 @@ class MHE():
                         grad_phi_hat0 = self.l1ao_grad_phi_hat0
 
                 # Solve QP with PCIP / PCIP+L1AO
-                self.pcip.set_QP(H, f)
-                zb_dot, zb = self.pcip.dynamics(z0)
+                self.pcip.set_QP(
+                    H=H,
+                    f=f,
+                    G=np.vstack((-matA, matA)) if self.has_inequality_constraints else None,
+                    h=np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None,
+                    t=tvec[-1]
+                )
+                zb_dot, zb = self.pcip.dynamics(z0, tvec[-1])
 
                 if self.solver == "pcip_l1ao":
                     self.l1ao.set_QP(H, f)

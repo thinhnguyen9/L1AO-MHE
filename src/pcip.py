@@ -1,49 +1,157 @@
 import numpy as np
-# from scipy.linalg import cholesky, solve_triangular
+# from scipy.linalg import cho_factor, cho_solve
 
 class PCIPQP:
     """
-    Prediction–Correction Interior Point solver for (unconstrained) Quadratic Program:
-        minimize 0.5 z^T H z + f^T z
+    Prediction-Correction Interior-Point solver for the Quadratic Program:
+        minimize 0.5 z'Hz + f'z
+        s.t. Gz <= h
     """
-    def __init__(self, alpha, ts, estimate_grad_zt=False):
+    def __init__(self, alpha, ts, enable_prediction=False):
         self.alpha   = alpha       # correction gain
         self.ts      = ts          # Euler step
-        self.estimate_grad_zt = estimate_grad_zt
+        self.enable_prediction = enable_prediction    # False: reduced to continuous-time Newton's method
+
+        # Barrier parameter: c(t) = c0*exp(gamma_c*t) \to \infty
+        self.c0 = 100.0
+        self.gamma_c = 0.0
+
+        # Slack variable: s(t) = s0*exp(-gamma_s*t) \to 0
+        self.s0 = 0.0
+        self.gamma_s = 0.0
+
+        # Initialize to prevent errors
+        self.G = None
+        self.h = None
+        self.G0 = None
+        self.h0 = None
+
+        # Try to save some computation time
+        self.fixed_barrier_parameter = False
+        self.fixed_slack_variable = False
+        if self.gamma_c < 1e-12:     self.fixed_barrier_parameter = True
+        if self.gamma_s < 1e-12:     self.fixed_slack_variable = True
     
-    def set_QP(self, H, f):
-        if self.estimate_grad_zt:
+    def set_QP(self, H, f, G=None, h=None, t=None):
+        if G is not None and h is not None:
+            self.has_inequality_constraints = True
+        else:
+            self.has_inequality_constraints = False
+        # self.has_inequality_constraints = False     # debug
+        if self.enable_prediction:
             if hasattr(self, 'H') and hasattr(self, 'f'):
                 self.H0 = self.H
                 self.f0 = self.f
             else:
                 self.H0 = H
                 self.f0 = f
+            if self.has_inequality_constraints:
+                if hasattr(self, 'G') and hasattr(self, 'h'):
+                    self.G0 = self.G
+                    self.h0 = self.h
+                else:
+                    self.G0 = G
+                    self.h0 = h
         self.H = H
         self.f = f
-
-    def dynamics(self, z0):
-        grad_phi = self.H @ z0 + self.f
-        hess_phi = self.H
-
-        # Estimate grad_zt_phi by finite difference
-        if self.estimate_grad_zt:
-            diff = self.H.shape[0] - self.H0.shape[0]
-            if diff == 0:   # QP size fixed
-                grad_phi0 = self.H0 @ z0 + self.f0
-                # hess_phi0 = self.H0
-            else:   # QP size grew
-                grad_phi0 = np.hstack([
-                    self.H0 @ z0[:-diff] + self.f0,
-                    grad_phi[-diff:]
-                ])
-                # hess_phi0 = self.H.copy()
-                # hess_phi0[:-diff, :-diff] = self.H0.copy()
-            grad_zt = (grad_phi - grad_phi0)/self.ts
+        if self.has_inequality_constraints:
+            self.G = G
+            self.h = h
+    
+    def get_params(self, t):
+        c = self.c0 * np.exp(self.gamma_c*t)
+        s = self.s0 * np.exp(-self.gamma_s*t)
+        cdot = self.gamma_c * c
+        sdot = -self.gamma_s * s
+        return c, s, cdot, sdot
+    
+    def _phi(self, H, f, z, G, h, t):
+        """
+        Objective function phi(t) with log barrier function B.
+        """
+        if self.has_inequality_constraints:
+            c, s, _, _ = self.get_params(t)
+            slack = s - (G@z - h)
+            if np.any(slack <= 0):
+                return np.inf
+            B = -(1./c)*np.sum(np.log(slack))
         else:
-            grad_zt = np.zeros_like(z0)
+            B = 0.0
+        return 0.5*z.T@H@z + f.T@z + B
+    
+    def _nabla_z_phi(self, H, f, z, G, h, t):
+        """
+        Objective Jacobian: nabla_z_phi(t)
+        """
+        if self.has_inequality_constraints:
+            c, s, _, _ = self.get_params(t)
+            slack = s - (G@z - h)
+            nabla_z_B = (1./c) * G.T @ (1./slack)
+        else:
+            nabla_z_B = 0.0
+        return H@z + f + nabla_z_B
+    
+    def _nabla_zz_phi(self, H, f, z, G, h, t):
+        """
+        Objective Hessian: nabla_zz_phi(t)
+        """
+        if self.has_inequality_constraints:
+            c, s, _, _ = self.get_params(t)
+            slack = s - (G@z - h)
+            nabla_zz_B = (1./c) * G.T @ np.diag(1./(slack**2)) @ G
+        else:
+            nabla_zz_B = 0.0
+        return H + nabla_zz_B
+
+    def dynamics(self, z0, t):
+        nabla_z_phi = self._nabla_z_phi(
+            H=self.H,
+            f=self.f,
+            z=z0,
+            G=self.G,
+            h=self.h,
+            t=t
+        )
+        nabla_zz_phi = self._nabla_zz_phi(
+            H=self.H,
+            f=self.f,
+            z=z0,
+            G=self.G,
+            h=self.h,
+            t=t
+        )
+
+        # Prediction term
+        prediction = np.zeros_like(z0)
+        if self.enable_prediction and t > 0.0:
+
+            # Estimate nabla_zt_phi by finite differences
+            diff = self.H.shape[0] - self.H0.shape[0]
+            nabla_z_phi0 = self._nabla_z_phi(
+                H=self.H0,
+                f=self.f0,
+                z=z0[:-diff] if diff>0 else z0,
+                G=self.G0,
+                h=self.h0,
+                t=t-self.ts
+            )
+            if diff > 0:
+                nabla_z_phi0 = np.hstack((nabla_z_phi0, nabla_z_phi[-diff:]))
+            prediction += (nabla_z_phi - nabla_z_phi0)/self.ts
+
+            # nabla_zc_phi*cdot + nabla_zs_phi*sdot
+            if self.has_inequality_constraints:
+                c, s, cdot, sdot = self.get_params(t)
+                slack = s - (self.G@z0 - self.h)
+                if not self.fixed_barrier_parameter:
+                    nabla_zc_phi = (-1./(c**2)) * self.G.T @ (1./slack)
+                    prediction += nabla_zc_phi*cdot
+                if not self.fixed_slack_variable:
+                    nabla_zs_phi = (-1./c) * self.G.T @ (1./(slack**2))
+                    prediction += nabla_zs_phi*sdot
 
         # Solution
-        zdot = np.linalg.solve(hess_phi, -self.alpha*grad_phi - grad_zt)
+        correction = self.alpha * nabla_z_phi
+        zdot = np.linalg.solve(nabla_zz_phi, - prediction - correction)
         z = z0 + self.ts*zdot  # z(T+1)!!
         return zdot, z
