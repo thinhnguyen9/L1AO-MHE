@@ -30,7 +30,16 @@ DEFAULT_LABEL_MAP = {
     "MHE (Newton+L1AO N=10)": "MHE ($\mathcal{L}_1$-AO, $N=10$)",
     "MHE (Newton+L1AO N=20)": "MHE ($\mathcal{L}_1$-AO, $N=20$)",
     "MHE (Newton+L1AO N=50)": "MHE ($\mathcal{L}_1$-AO, $N=50$)",
-    "MHE (Newton+L1AO N=100)": "MHE ($\mathcal{L}_1$-AO, $N=100$)"
+    "MHE (Newton+L1AO N=100)": "MHE ($\mathcal{L}_1$-AO, $N=100$)",
+    "MHE (CVXOPT N=10)": "MHE ($N=10$, CVXOPT)",
+    "MHE (CVXOPT N=20)": "MHE ($N=20$, CVXOPT)",
+    "MHE (CVXOPT N=40)": "MHE ($N=40$, CVXOPT)",
+    "MHE (PCIP N=10)": "MHE ($N=10$, PCIP)",
+    "MHE (PCIP N=20)": "MHE ($N=20$, PCIP)",
+    "MHE (PCIP N=40)": "MHE ($N=40$, PCIP)",
+    "MHE (PCIP+L1AO N=10)": "MHE ($N=10$, PCIP+$\mathcal{L}_1$-AO)",
+    "MHE (PCIP+L1AO N=20)": "MHE ($N=20$, PCIP+$\mathcal{L}_1$-AO)",
+    "MHE (PCIP+L1AO N=40)": "MHE ($N=40$, PCIP+$\mathcal{L}_1$-AO)",
 }
 
 DEFAULT_COLORS = {
@@ -38,7 +47,13 @@ DEFAULT_COLORS = {
     "MHE (OSQP N=10)": "tab:blue", 
     "MHE (OSQP N=100)": "tab:green",
     "MHE (Newton+L1AO N=10)": "tab:orange",
-    "MHE (Newton+L1AO N=100)": "magenta"
+    "MHE (Newton+L1AO N=100)": "magenta",
+    "MHE (CVXOPT N=10)": "tab:cyan", 
+    "MHE (CVXOPT N=40)": "tab:olive",
+    "MHE (PCIP N=10)": "tab:orange", 
+    "MHE (PCIP N=40)": "tab:green",
+    "MHE (PCIP+L1AO N=10)": "tab:blue",
+    "MHE (PCIP+L1AO N=40)": "magenta",
 }
 
 DEFAULT_MARKERS = {
@@ -54,7 +69,13 @@ DEFAULT_LINES = {
     "MHE (OSQP N=10)": "solid", 
     "MHE (OSQP N=100)": "solid",
     "MHE (Newton+L1AO N=10)": (0, (5, 10)),
-    "MHE (Newton+L1AO N=100)": (0, (5, 10))
+    "MHE (Newton+L1AO N=100)": (0, (5, 10)),
+    "MHE (CVXOPT N=10)": "solid", 
+    "MHE (CVXOPT N=40)": "solid",
+    "MHE (PCIP N=10)": "solid", 
+    "MHE (PCIP N=40)": "solid",
+    "MHE (PCIP+L1AO N=10)": (0, (5, 10)),
+    "MHE (PCIP+L1AO N=40)": (0, (5, 10)),
 }
 
 DEFAULT_LINEWEIGHT = {
@@ -62,7 +83,13 @@ DEFAULT_LINEWEIGHT = {
     "MHE (OSQP N=10)"         : 2.0, 
     "MHE (OSQP N=100)"        : 2.0,
     "MHE (Newton+L1AO N=10)"  : 1.5,
-    "MHE (Newton+L1AO N=100)" : 1.5
+    "MHE (Newton+L1AO N=100)" : 1.5,
+    "MHE (CVXOPT N=10)"       : 1.5, 
+    "MHE (CVXOPT N=40)"       : 1.5,
+    "MHE (PCIP N=10)"         : 1.5, 
+    "MHE (PCIP N=40)"         : 1.5,
+    "MHE (PCIP+L1AO N=10)"    : 1.5,
+    "MHE (PCIP+L1AO N=40)"    : 1.5,
 }
 
 def plot_csv(
@@ -147,7 +174,7 @@ def plot_csv(
         # ---------------- inset: zoom t = 10..15 s ----------------
     zoom_t0, zoom_t1 = 20.0, 25.0
     # make inset in upper-right of the axes (x, y, width, height in axes coords)
-    axins = ax.inset_axes([0.2, 0.1, 0.4, 0.4])
+    axins = ax.inset_axes([0.1, 0.1, 0.4, 0.4])
     # collect y-values in zoom window so we can set reasonable y-limits
     y_zoom_vals = []
     for i, est in enumerate(estimators):
@@ -199,7 +226,8 @@ def plot_csv(
     ax.set_xlabel('Time (s)')
     ax.set_ylabel(r'$\|x - \hat{x}\|$')
     ax.grid(which='both', linestyle='--', linewidth=0.4)
-    ax.set_xlim((df['time'].min(), df['time'].max()))
+    # ax.set_xlim((df['time'].min(), df['time'].max()))
+    ax.set_xlim((0.0, 30.0))
     ax.set_ylim((0., df['estimation_error_norm'].max()*1.2))
     if ylog:
         ax.set_yscale('log')
@@ -221,20 +249,29 @@ def plot_csv(
     plt.show()
 
 def main():
-    csv_path = os.path.join(os.path.dirname(__file__), "2025-12-06_scenario2_estimation_error.csv")
-    # csv_path = os.path.join(os.path.dirname(__file__), "2025-12-05_scenario2_estimation_error.csv")
+    # csv_path = os.path.join(os.path.dirname(__file__), "2025-12-06_scenario2_estimation_error.csv")
+    csv_path = os.path.join(os.path.dirname(__file__), "2025-12-15_scenario2_estimation_error.csv")
 
     plot_csv(
         csv_path=csv_path,
-        run_id_filter=["33e0cf8b (Q1)", "677a5eaa (Q1)"],
+        # run_id_filter=["33e0cf8b (Q1)", "677a5eaa (Q1)"],
+        run_id_filter=["9aafc067 (Q1)", "f8f42628 (Q1)"],
+        # estimators_filter=[
+        #     "EKF", 
+        #     "MHE (OSQP N=10)", 
+        #     "MHE (Newton+L1AO N=10)", 
+        #     "MHE (OSQP N=100)", 
+        #     "MHE (Newton+L1AO N=100)"
+        # ],
         estimators_filter=[
-            "EKF", 
-            "MHE (OSQP N=10)", 
-            "MHE (Newton+L1AO N=10)", 
-            "MHE (OSQP N=100)", 
-            "MHE (Newton+L1AO N=100)"
+            "EKF",
+            "MHE (CVXOPT N=10)",
+            "MHE (PCIP N=10)",
+            "MHE (PCIP+L1AO N=10)",
+            "MHE (CVXOPT N=40)",
+            "MHE (PCIP N=40)",
+            "MHE (PCIP+L1AO N=40)",
         ],
-        # estimators_filter=["EKF", "MHE (OSQP)", "MHE (Newton+L1AO)"],
         ylog=True,
         # usemarker=True,
         markevery=100,

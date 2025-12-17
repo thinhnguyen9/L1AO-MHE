@@ -404,29 +404,33 @@ class Simulator():
             raise ValueError("Invalid estimator class. Supported classes: KF, MHE.")
 
         t0 = time.perf_counter()
-        for i in range(self.N):
-            # -------------- Kalman filter --------------
-            if estimator_class == 'KF':
-                estimator.update_covariance(
-                    Q = self.Q[i],
-                    R = self.R[i]
-                )
-                x0hat = estimator.correction(x0hat, self.yvec[i], t=self.tvec[i])
-                xhat[i] = x0hat
-                x0hat = estimator.prediction(x0hat, self.uvec[i], t=self.tvec[i])
+        try:
+            for i in range(self.N):
+                # -------------- Kalman filter --------------
+                if estimator_class == 'KF':
+                    estimator.update_covariance(
+                        Q = self.Q[i],
+                        R = self.R[i]
+                    )
+                    x0hat = estimator.correction(x0hat, self.yvec[i], t=self.tvec[i])
+                    xhat[i] = x0hat
+                    x0hat = estimator.prediction(x0hat, self.uvec[i], t=self.tvec[i])
 
-            # -------------- Linear MHE --------------
-            elif estimator_class == 'MHE':
-                x0hat = estimator.doEstimation(
-                    yvec = self.yvec[: i+1],
-                    uvec = self.uvec[: i],
-                    Qinv_seq = self.Q_inv[: i+1],
-                    Rinv_seq = self.R_inv[: i+1],
-                    Q_seq = self.Q[: i+1],  # only used by smoothing MHE
-                    R_seq = self.R[: i+1]   # only used by smoothing MHE
-                )
-                xhat[i] = x0hat
-                # estimator.updateCovariance(xhat[i], self.uvec[i])
+                # -------------- Linear MHE --------------
+                elif estimator_class == 'MHE':
+                    x0hat = estimator.doEstimation(
+                        yvec = self.yvec[: i+1],
+                        uvec = self.uvec[: i],
+                        Qinv_seq = self.Q_inv[: i+1],
+                        Rinv_seq = self.R_inv[: i+1],
+                        Q_seq = self.Q[: i+1],  # only used by smoothing MHE
+                        R_seq = self.R[: i+1]   # only used by smoothing MHE
+                    )
+                    xhat[i] = x0hat
+                    # estimator.updateCovariance(xhat[i], self.uvec[i])
+        except:
+            print(estimator_class + " failed! Returning NaN...")
+            xhat.fill(np.nan)
         elapsed_time = time.perf_counter() - t0
         return xhat, elapsed_time
 

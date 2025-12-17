@@ -1,30 +1,38 @@
 import numpy as np
 # from scipy.linalg import cho_factor, cho_solve
 
+def saturate(val, lower_bound, upper_bound):
+    return max(lower_bound, min(upper_bound, val))
+
 class PCIPQP:
     """
     Prediction-Correction Interior-Point solver for the Quadratic Program:
         minimize 0.5 z'Hz + f'z
         s.t. Gz <= h
     """
-    def __init__(self, alpha, ts, enable_prediction=False):
+    def __init__(
+            self, alpha, ts,
+            interior_point_barrier=None, interior_point_slack=None,
+            enable_prediction=False
+        ):
         self.alpha   = alpha       # correction gain
         self.ts      = ts          # Euler step
         self.enable_prediction = enable_prediction    # False: reduced to continuous-time Newton's method
 
         # Barrier parameter: c(t) = c0*exp(gamma_c*t) \to \infty
-        self.c0 = 100.0
-        self.gamma_c = 0.0
+        if interior_point_barrier is None:
+            self.c0 = 100.0
+            self.gamma_c = 0.0
+        else:
+            self.c0, self.gamma_c = interior_point_barrier
+        self.cmax = max(self.c0, 100.0)     # if c=\infty, constraints are not enforced
 
         # Slack variable: s(t) = s0*exp(-gamma_s*t) \to 0
-        self.s0 = 0.0
-        self.gamma_s = 0.0
-
-        # Initialize to prevent errors
-        self.G = None
-        self.h = None
-        self.G0 = None
-        self.h0 = None
+        if interior_point_slack is None:
+            self.s0 = 0.0
+            self.gamma_s = 0.0
+        else:
+            self.s0, self.gamma_s = interior_point_slack
 
         # Try to save some computation time
         self.fixed_barrier_parameter = False
@@ -37,7 +45,13 @@ class PCIPQP:
             self.has_inequality_constraints = True
         else:
             self.has_inequality_constraints = False
-        # self.has_inequality_constraints = False     # debug
+        # ---------------- debug ---------------- #
+        # self.has_inequality_constraints = False
+        # self.G = None
+        # self.h = None
+        # self.G0 = None
+        # self.h0 = None
+        # --------------------------------------- #
         if self.enable_prediction:
             if hasattr(self, 'H') and hasattr(self, 'f'):
                 self.H0 = self.H
@@ -52,14 +66,20 @@ class PCIPQP:
                 else:
                     self.G0 = G
                     self.h0 = h
+            else:
+                self.G0 = None
+                self.h0 = None
         self.H = H
         self.f = f
         if self.has_inequality_constraints:
             self.G = G
             self.h = h
+        else:
+            self.G = None
+            self.h = None
     
     def get_params(self, t):
-        c = self.c0 * np.exp(self.gamma_c*t)
+        c = saturate(self.c0 * np.exp(self.gamma_c*t), self.c0, self.cmax)
         s = self.s0 * np.exp(-self.gamma_s*t)
         cdot = self.gamma_c * c
         sdot = -self.gamma_s * s

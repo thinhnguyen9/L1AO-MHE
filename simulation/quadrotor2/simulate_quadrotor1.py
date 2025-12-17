@@ -54,12 +54,17 @@ def main(
         save_csv_raw_data=False,
         enable_plot=False,
         measurement_delay=0,
+        lmhe1_solver="osqp",
         lmhe2_pcip_alpha=1./.01,
         lmhe2_pcip_prediction=True,
         lmhe3_pcip_alpha=1./.01,
         lmhe3_pcip_prediction=True,
         lmhe3_l1ao_As=-.1,
-        lmhe3_l1ao_omega=50.
+        lmhe3_l1ao_omega=50.,
+        interior_point_barrier=None,
+        interior_point_slack=None,
+        xmin=None,
+        xmax=None
     ):
     
     # ----------------------- Quadrotor -----------------------
@@ -600,14 +605,19 @@ if __name__ == "__main__":
         # mhe_horizon  = 18,              # longer horizon: lower P0 so PCIP/L1AO doesn't blow up
         mhe_update   = "smoothing",     # "filtering" (default), "smoothing", or "smoothing_naive"
         # prior_method = "uniform",     # "zero", "uniform", "ekf" (default)
+        # xmin = np.array([-1., -1.,  .5, -5., -5., -1., -np.pi/3, -np.pi/3, -np.pi/9, -50., -50., -50.]), # state constraints for circle traj
+        # xmax = np.array([ 1.,  1., 1.5,  5.,  5.,  1.,  np.pi/3,  np.pi/3,  np.pi/9,  50.,  50.,  50.]),
 
-        # ---------------- TV solvers ----------------
-        lmhe2_pcip_alpha    = 1./.01,
+        # ---------------- MHE solvers ----------------
+        lmhe1_solver            = "osqp",   # cvxpy/osqp/cvxopt/pcip/pcip_l1ao
+        lmhe2_pcip_alpha        = 1./.01,
         lmhe2_pcip_prediction   = True,     # False: reduce to Newton method
-        lmhe3_pcip_alpha    = .5/.01,
+        lmhe3_pcip_alpha        = .5/.01,
         lmhe3_pcip_prediction   = True,     # False: reduce to Newton method
-        lmhe3_l1ao_As       = -.1,
-        lmhe3_l1ao_omega    = 150.,
+        lmhe3_l1ao_As           = -.1,
+        lmhe3_l1ao_omega        = 150.,
+        # interior_point_barrier  = [0.001, 10.0],    # c(t)=c0*exp(gamma_c*t): c0, gamma_c
+        # interior_point_slack    = [10.0, 10.0],     # s(t)=s0*exp(-gamma_s*t): s0, gamma_s
 
         # ---------------- Corner cases ----------------
         # time_varying_measurement_noise = True,

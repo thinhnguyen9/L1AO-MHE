@@ -57,6 +57,8 @@ def main(
         lmhe3_pcip_prediction=True,
         lmhe3_l1ao_As=-.1,
         lmhe3_l1ao_omega=50.,
+        interior_point_barrier=None,
+        interior_point_slack=None,
         xmin=None,
         xmax=None
     ):
@@ -144,6 +146,7 @@ def main(
                 x0 = x0 + x0var
             else:
                 x0 = x0 + x0norm*x0var/norm_x0var  # normalize so that norm(e0)=1
+        # x0 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2*np.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
         
         # Initialize estimators - must be done every loop
         if 'KF' in enabled_estimators:
@@ -182,7 +185,9 @@ def main(
             lmhe2_pcip_obj = PCIPQP(
                 alpha               = lmhe2_pcip_alpha,
                 ts                  = ts,
-                enable_prediction   = lmhe2_pcip_prediction
+                enable_prediction   = lmhe2_pcip_prediction,
+                interior_point_barrier = interior_point_barrier,
+                interior_point_slack   = interior_point_slack
             )
             LMHE_pcip = MHE(
                 model           = drone_est,
@@ -204,14 +209,18 @@ def main(
             lmhe3_pcip_obj = PCIPQP(
                 alpha               = lmhe3_pcip_alpha,
                 ts                  = ts,
-                enable_prediction   = lmhe3_pcip_prediction
+                enable_prediction   = lmhe3_pcip_prediction,
+                interior_point_barrier = interior_point_barrier,
+                interior_point_slack   = interior_point_slack
             )
             lmhe3_l1ao_obj = L1AOQP(
                 ts                  = ts,
                 a                   = lmhe3_l1ao_As,
                 lpf_omega           = lmhe3_l1ao_omega,
                 enable_prediction   = True,
-                # clip_zdot = True
+                # clip_zdot = True,
+                interior_point_barrier = interior_point_barrier,
+                interior_point_slack   = interior_point_slack
             )
             LMHE_pcip_l1ao = MHE(
                 model           = drone_est,
@@ -555,6 +564,8 @@ if __name__ == "__main__":
         lmhe3_pcip_prediction   = True,     # False: reduce to Newton method
         lmhe3_l1ao_As           = -.1,
         lmhe3_l1ao_omega        = 150.,
+        # interior_point_barrier  = [0.001, 10.0],    # c(t)=c0*exp(gamma_c*t): c0, gamma_c
+        # interior_point_slack    = [10.0, 10.0],     # s(t)=s0*exp(-gamma_s*t): s0, gamma_s
 
         # ---------------- Corner cases ----------------
         # time_varying_measurement_noise = True,

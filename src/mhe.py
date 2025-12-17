@@ -376,9 +376,14 @@ class MHE():
                 zb_dot, zb = self.pcip.dynamics(z0, tvec[-1])
 
                 if self.solver == "pcip_l1ao":
-                    self.l1ao.set_QP(H, f)
-                    # za_dot, grad_phi_hat, z = self.l1ao.dynamics(z0, za_dot0, grad_phi_hat0, zb_dot)
-                    za_dot, grad_phi_hat, z, zdot = self.l1ao.dynamics(z0, zdot0, za_dot0, grad_phi_hat0, zb_dot)
+                    self.l1ao.set_QP(
+                        H=H,
+                        f=f,
+                        G=np.vstack((-matA, matA)) if self.has_inequality_constraints else None,
+                        h=np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None,
+                        t=tvec[-1]
+                    )
+                    za_dot, grad_phi_hat, z, zdot = self.l1ao.dynamics(z0, zdot0, za_dot0, grad_phi_hat0, zb_dot, tvec[-1])
 
                     # Save for next time step (only L1AO): za_dot(T), grad_phi_hat(T+1)
                     self.l1ao_za_dot0 = za_dot
