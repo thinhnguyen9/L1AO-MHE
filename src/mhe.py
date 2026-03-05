@@ -6,7 +6,8 @@ from scipy import sparse
 from cvxopt import matrix, solvers
 # from scipy.optimize import minimize, LinearConstraint
 import copy
-from src.utils import build_mhe_qp_with_dyn_constraints, build_mhe_qp_with_dyn_constraints_lagrangian, build_mhe_qp
+from src.utils import build_mhe_qp_multiple_shooting, build_mhe_qp_equality_constraints_lagrangian, build_mhe_qp_single_shooting
+import time
 
 
 class MHE():
@@ -88,6 +89,8 @@ class MHE():
             if l1ao_obj is None:
                 raise ValueError("Missing 'l1ao_obj'.")
             self.l1ao = l1ao_obj
+        
+        self._solver_times = []
 
     def updateModel(self, A, B, G, C):
         # Discretize
@@ -240,7 +243,7 @@ class MHE():
                 P0_inv = np.zeros((self.Nx, self.Nx))
             else:
                 P0_inv = np.linalg.inv(P0)
-            H, f, matA = build_mhe_qp(
+            H, f, matA = build_mhe_qp_single_shooting(
                 A_seq, B_seq, G_seq, C_seq, Qinv_seq[:-1], Rinv_seq, X0, P0_inv, u, y,
                 smoothing_adjustment=(self.mhe_update=="smoothing"),
                 Q_seq=Q_seq, R_seq=R_seq
@@ -253,6 +256,7 @@ class MHE():
                 zmin = np.kron(np.ones((N+1,)), self.xmin) - xnom.flatten()
                 zmax = np.kron(np.ones((N+1,)), self.xmax) - xnom.flatten()     # zmin <= matA @ z <= zmax
             
+            t0 = time.perf_counter()
             if self.solver == "cvxpy":
                 """ # Dynamics as equality constraints
                 H, f, A_eq, b_eq = build_mhe_qp_with_dyn_constraints(A_seq, B_seq, G_seq, C_seq, self.Q_inv, self.R_inv,
@@ -394,7 +398,9 @@ class MHE():
                 # Save for next time step: z(T+1), zdot(T)
                 self.tvopt_z0 = z
                 self.tvopt_zdot0 = zdot
-            
+            t1 = time.perf_counter()
+            self._solver_times.append(t1 - t0)
+
             # Result for linear MHE
             # if z is None:   # CVXPY failed
             #     xvec = xnom.copy()
@@ -517,3 +523,9 @@ class MHE():
         for k in range(N):
             xvec[k+1] = A_seq[k] @ xvec[k] + B_seq[k] @ u_seq[k] + G_seq[k] @ w_seq[k]
         return xvec
+    
+    def get_mean_solver_time(self, start_idx=0):
+        if len(self._solver_times) == 0:
+            return 0.0
+        else:
+            return np.mean(self._solver_times[start_idx:])

@@ -60,7 +60,8 @@ def main(
         interior_point_barrier=None,
         interior_point_slack=None,
         xmin=None,
-        xmax=None
+        xmax=None,
+        linear_solver="cg"
     ):
     
     # ----------------------- Quadrotor -----------------------
@@ -101,8 +102,9 @@ def main(
     print(f"Use Q,R guesses    : " + str(use_QR_guess))
     print("======================= MHE settings ======================")
     print(f"Horizon            : {mhe_horizon:.0f}")
-    print(f"MHE scheme         : " + mhe_update)
-    print(f"Prior weighting    : " + prior_method)
+    print("MHE scheme         : " + mhe_update)
+    print("Prior weighting    : " + prior_method)
+    print("Linear solver      : " + linear_solver)
 
     sim = Simulator(
         mode    = 'quadrotor',
@@ -166,7 +168,7 @@ def main(
                 type    = "extended"
             )
         if 'LMHE1' in enabled_estimators:
-            LMHE_cvxpy = MHE(
+            lmhe1_obj = MHE(
                 model           = drone_est,
                 ts              = sim.get_time_step(),
                 N               = mhe_horizon,
@@ -187,9 +189,10 @@ def main(
                 ts                  = ts,
                 enable_prediction   = lmhe2_pcip_prediction,
                 interior_point_barrier = interior_point_barrier,
-                interior_point_slack   = interior_point_slack
+                interior_point_slack   = interior_point_slack,
+                linear_solver          = linear_solver
             )
-            LMHE_pcip = MHE(
+            lmhe2_obj = MHE(
                 model           = drone_est,
                 ts              = sim.get_time_step(),
                 N               = mhe_horizon,
@@ -211,18 +214,11 @@ def main(
                 ts                  = ts,
                 enable_prediction   = lmhe3_pcip_prediction,
                 interior_point_barrier = interior_point_barrier,
-                interior_point_slack   = interior_point_slack
+                interior_point_slack   = interior_point_slack,
+                linear_solver          = linear_solver,
+                l1ao_augmentation      = {"a": lmhe3_l1ao_As, "lpf_omega": lmhe3_l1ao_omega}
             )
-            lmhe3_l1ao_obj = L1AOQP(
-                ts                  = ts,
-                a                   = lmhe3_l1ao_As,
-                lpf_omega           = lmhe3_l1ao_omega,
-                enable_prediction   = True,
-                # clip_zdot = True,
-                interior_point_barrier = interior_point_barrier,
-                interior_point_slack   = interior_point_slack
-            )
-            LMHE_pcip_l1ao = MHE(
+            lmhe3_obj = MHE(
                 model           = drone_est,
                 ts              = sim.get_time_step(),
                 N               = mhe_horizon,
@@ -231,28 +227,13 @@ def main(
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
                 prior_method    = prior_method,
-                solver          = "pcip_l1ao",
+                solver          = "pcip",
                 xs              = xhover_est,
                 us              = uhover_est,
                 pcip_obj        = lmhe3_pcip_obj,
-                l1ao_obj        = lmhe3_l1ao_obj,
                 xmin            = xmin,
                 xmax            = xmax
             )
-        # if 'NMHE' in enabled_estimators:
-        #     NMHE = MHE(
-        #         model           = drone_est,
-        #         ts              = sim.get_time_step(),
-        #         N               = mhe_horizon,
-        #         X0              = x0,
-        #         P0              = P0,
-        #         mhe_type        = "nonlinear",
-        #         mhe_update      = mhe_update,
-        #         prior_method    = prior_method,
-        #         solver          = None,  # nonlinear MHE cannot use QP PCIP!!
-        #         xs              = xhover_est,
-        #         us              = uhover_est
-        #     )
 
         N = len(tvec)
         if 'KF' in enabled_estimators:
@@ -264,32 +245,26 @@ def main(
             rmse_ekf = rmse(xvec[t0:], xhat_ekf[t0:])
             if keep_initial_guess: xhat_ekf[0] = x0.copy()
         if 'LMHE1' in enabled_estimators:
-            xhat_lmhe1, lmhe1_time = sim.run_estimation(LMHE_cvxpy, x0)
+            xhat_lmhe1, lmhe1_time = sim.run_estimation(lmhe1_obj, x0)
             rmse_lmhe1 = rmse(xvec[t0:], xhat_lmhe1[t0:])
             if keep_initial_guess: xhat_lmhe1[0] = x0.copy()
         if 'LMHE2' in enabled_estimators:
-            xhat_lmhe2, lmhe2_time = sim.run_estimation(LMHE_pcip, x0)
+            xhat_lmhe2, lmhe2_time = sim.run_estimation(lmhe2_obj, x0)
             rmse_lmhe2 = rmse(xvec[t0:], xhat_lmhe2[t0:])
             if keep_initial_guess: xhat_lmhe2[0] = x0.copy()
         if 'LMHE3' in enabled_estimators:
-            xhat_lmhe3, lmhe3_time = sim.run_estimation(LMHE_pcip_l1ao, x0)
+            xhat_lmhe3, lmhe3_time = sim.run_estimation(lmhe3_obj, x0)
             rmse_lmhe3 = rmse(xvec[t0:], xhat_lmhe3[t0:])
             if keep_initial_guess: xhat_lmhe3[0] = x0.copy()
-        # if 'NMHE' in enabled_estimators:
-        #     xhat_nmhe, nmhe_time = sim.run_estimation(NMHE, x0)
-        #     rmse_nmhe = rmse(xvec[t0:], xhat_nmhe[t0:])
-        #     if keep_initial_guess: xhat_nmhe[0] = x0.copy()
 
-        print(f"(k={t0:.0f} onwards)      RMSE\tAvg. step time (ms)")
+        print(f"(k={t0:.0f} onwards)        RMSE            MHE step (ms)    Solver (ms)    Lin.sol. (ms)")
         if 'KF' in enabled_estimators:      print(f"KF                : {rmse_kf:.4f}\t\t{kf_time*1000./N:.4f}")
         if 'EKF' in enabled_estimators:     print(f"EKF               : {rmse_ekf:.4f}\t\t{ekf_time*1000./N:.4f}")
-        # if 'LMHE1' in enabled_estimators:   print(f"LMHE1 (CVXPY)     : {rmse_lmhe1:.4f}\t\t{lmhe1_time*1000./N:.4f}")
         if 'LMHE1' in enabled_estimators:
             spaces = " " * (10 - len(lmhe1_solver))
-            print("LMHE1 (" + lmhe1_solver.upper() + ")" + spaces + f": {rmse_lmhe1:.4f}\t\t{lmhe1_time*1000./N:.4f}")
-        if 'LMHE2' in enabled_estimators:   print(f"LMHE2 (PCIP)      : {rmse_lmhe2:.4f}\t\t{lmhe2_time*1000./N:.4f}")
-        if 'LMHE3' in enabled_estimators:   print(f"LMHE3 (PCIP+L1AO) : {rmse_lmhe3:.4f}\t\t{lmhe3_time*1000./N:.4f}")
-        # if 'NMHE' in enabled_estimators:    print(f"NMHE              : {rmse_nmhe:.4f}\t\t{nmhe_time*1000./N:.4f}")
+            print("LMHE1 (" + lmhe1_solver.upper() + ")" + spaces + f": {rmse_lmhe1:.4f}\t\t{lmhe1_time*1000./N:.4f}\t\t{lmhe1_obj.get_mean_solver_time(t0)*1000:.4f}")
+        if 'LMHE2' in enabled_estimators:   print(f"LMHE2 (PCIP)      : {rmse_lmhe2:.4f}\t\t{lmhe2_time*1000./N:.4f}\t\t{lmhe2_obj.get_mean_solver_time(t0)*1000:.4f}\t\t{lmhe2_pcip_obj.get_mean_linsol_time(t0)*1000:.4f}")
+        if 'LMHE3' in enabled_estimators:   print(f"LMHE3 (PCIP+L1AO) : {rmse_lmhe3:.4f}\t\t{lmhe3_time*1000./N:.4f}\t\t{lmhe3_obj.get_mean_solver_time(t0)*1000:.4f}\t\t{lmhe3_pcip_obj.get_mean_linsol_time(t0)*1000:.4f}")
         # if 'EKF' in enabled_estimators and 'LMHE1' in enabled_estimators:
         #     print("----------------------------")
         #     print(f"LMHE1-EKF RMSE: {np.sqrt(np.mean((xhat_lmhe1 - xhat_ekf)**2)):.4f}")
@@ -302,7 +277,6 @@ def main(
             if 'LMHE1' in enabled_estimators:   data.append([run_id, loop+1, 'LMHE1', rmse_lmhe1, np.max(np.abs(xvec-xhat_lmhe1)), lmhe1_time*1000./N, T, ts, t0])
             if 'LMHE2' in enabled_estimators:   data.append([run_id, loop+1, 'LMHE2', rmse_lmhe2, np.max(np.abs(xvec-xhat_lmhe2)), lmhe2_time*1000./N, T, ts, t0])
             if 'LMHE3' in enabled_estimators:   data.append([run_id, loop+1, 'LMHE3', rmse_lmhe3, np.max(np.abs(xvec-xhat_lmhe3)), lmhe3_time*1000./N, T, ts, t0])
-            # if 'NMHE' in enabled_estimators:    data.append([run_id, loop+1, 'NMHE',  rmse_nmhe,  np.max(np.abs(xvec-xhat_nmhe)),  nmhe_time*1000./N,  T, ts, t0])
             file_path = os.path.join(os.path.dirname(__file__), 'data/simulation_instances.csv')
             write_header = not os.path.exists(file_path)
             with open(file_path, 'a', newline='') as csvfile:
@@ -318,7 +292,6 @@ def main(
             if 'LMHE1' in enabled_estimators:   err_lmhe1 = np.linalg.norm(xvec - xhat_lmhe1, axis=1)
             if 'LMHE2' in enabled_estimators:   err_lmhe2 = np.linalg.norm(xvec - xhat_lmhe2, axis=1)
             if 'LMHE3' in enabled_estimators:   err_lmhe3 = np.linalg.norm(xvec - xhat_lmhe3, axis=1)
-            # if 'NMHE'  in enabled_estimators:   err_nmhe  = np.linalg.norm(xvec - xhat_nmhe,  axis=1)
 
             file_path = os.path.join(os.path.dirname(__file__), 'data/estimation_error.csv')
             write_header = not os.path.exists(file_path)
@@ -333,7 +306,6 @@ def main(
                     if 'LMHE1' in enabled_estimators:   writer.writerow([run_id, loop+1, 'LMHE1', T, f"{t:.2f}", f"{err_lmhe1[i]:.6f}"])
                     if 'LMHE2' in enabled_estimators:   writer.writerow([run_id, loop+1, 'LMHE2', T, f"{t:.2f}", f"{err_lmhe2[i]:.6f}"])
                     if 'LMHE3' in enabled_estimators:   writer.writerow([run_id, loop+1, 'LMHE3', T, f"{t:.2f}", f"{err_lmhe3[i]:.6f}"])
-                    # if 'NMHE'  in enabled_estimators:   writer.writerow([run_id, loop+1, 'NMHE',  T, f"{t:.2f}", f"{err_nmhe[i]:.6f}"])
             print("Data written to " + file_path)
     print("============================================================")
     xhat = xhat_ekf if 'EKF' in enabled_estimators else np.zeros_like(xvec)
@@ -354,7 +326,6 @@ def main(
         if 'LMHE1' in enabled_estimators:   rmse_lmhe1  = np.sqrt(np.mean((xvec - xhat_lmhe1)**2, axis=0))
         if 'LMHE2' in enabled_estimators:   rmse_lmhe2  = np.sqrt(np.mean((xvec - xhat_lmhe2)**2, axis=0))
         if 'LMHE3' in enabled_estimators:   rmse_lmhe3  = np.sqrt(np.mean((xvec - xhat_lmhe3)**2, axis=0))
-        # if 'NMHE' in enabled_estimators:    rmse_nmhe   = np.sqrt(np.mean((xvec - xhat_nmhe)**2, axis=0))
 
         def plot_state(idx, ylabel=None, invert_y=False, rad2deg=False, title_prefix=''):
             plt.plot(tvec, xvec[:,idx]*(180/np.pi if rad2deg else 1), 'k-', lw=3., label=title_prefix+'_true')
@@ -372,8 +343,6 @@ def main(
                 plt.plot(tvec, xhat_lmhe2[:,idx]*(180/np.pi if rad2deg else 1), color='tab:orange', ls='-', lw=1.5, label='LMHE2')
             if 'LMHE3' in enabled_estimators:
                 plt.plot(tvec, xhat_lmhe3[:,idx]*(180/np.pi if rad2deg else 1), color='tab:green', ls='-', lw=1.5, label='LMHE3')
-            # if 'NMHE' in enabled_estimators:
-            #     plt.plot(tvec, xhat_nmhe[:,idx]*(180/np.pi if rad2deg else 1), 'y-', lw=1., label='NMHE')
             plt.grid()
             # plt.ylim((-2,2))
             leg = plt.legend()
@@ -387,7 +356,6 @@ def main(
             if 'LMHE1' in enabled_estimators:   rmse_str.append(f"LMHE1={rmse_lmhe1[idx]*(180/np.pi if rad2deg else 1):.4f}")
             if 'LMHE2' in enabled_estimators:   rmse_str.append(f"LMHE2={rmse_lmhe2[idx]*(180/np.pi if rad2deg else 1):.4f}")
             if 'LMHE3' in enabled_estimators:   rmse_str.append(f"LMHE3={rmse_lmhe3[idx]*(180/np.pi if rad2deg else 1):.4f}")
-            # if 'NMHE' in enabled_estimators:    rmse_str.append(f"NMHE={rmse_nmhe[idx]*(180/np.pi if rad2deg else 1):.4f}")
             plt.title(f"{title_prefix} RMSE: {', '.join(rmse_str)}", fontsize=10)
 
         plt.figure(1)
@@ -451,8 +419,6 @@ def main(
                 plt.plot(tvec, xvec[:,idx]-xhat_lmhe1[:,idx], 'm-', lw=1., label='LMHE1')
             if 'LMHE2' in enabled_estimators:
                 plt.plot(tvec, xvec[:,idx]-xhat_lmhe2[:,idx], 'c-', lw=1., label='LMHE2')
-            # if 'NMHE' in enabled_estimators:
-            #     plt.plot(tvec, xvec[:,idx]-xhat_nmhe[:,idx], 'y-', lw=1., label='NMHE')
             if 'EKF' in enabled_estimators and 'LMHE2' in enabled_estimators:
                 plt.plot(tvec, xhat_lmhe2[:,idx]-xhat_ekf[:,idx], 'k--', lw=1., label='LMHE2-EKF')
             plt.grid()

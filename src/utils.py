@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.linalg import block_diag
 
-def build_mhe_qp_with_dyn_constraints(A_seq, B_seq, G_seq, C_seq, Q_inv, R_inv, x_prior, P_prior_inv, u_seq, y_seq):
+def build_mhe_qp_multiple_shooting(A_seq, B_seq, G_seq, C_seq, Q_inv, R_inv, x_prior, P_prior_inv, u_seq, y_seq):
     """
     Optimization variable: z = [x(0),..., x(N), w(0),..., w(N-1)]
 
@@ -56,7 +56,7 @@ def build_mhe_qp_with_dyn_constraints(A_seq, B_seq, G_seq, C_seq, Q_inv, R_inv, 
     return H, f, A_eq, b_eq
 
 
-def build_mhe_qp_with_dyn_constraints_lagrangian(H, f, A_eq, b_eq):
+def build_mhe_qp_equality_constraints_lagrangian(H, f, A_eq, b_eq):
 
     # With Lagrange multiplier:
     # V = 0.5 z'Hz + f'z + v'(A_eq z - b_eq)
@@ -67,7 +67,7 @@ def build_mhe_qp_with_dyn_constraints_lagrangian(H, f, A_eq, b_eq):
     f = np.hstack([f, -b_eq])
     return H, f
 
-def build_mhe_qp(
+def build_mhe_qp_single_shooting(
         A_seq, B_seq, G_seq, C_seq, Qinv_seq, Rinv_seq,
         x_prior, P_prior_inv, u_seq, y_seq,
         smoothing_adjustment=False, Q_seq=None, R_seq=None
