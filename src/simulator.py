@@ -428,8 +428,9 @@ class Simulator():
                     )
                     xhat[i] = x0hat
                     # estimator.updateCovariance(xhat[i], self.uvec[i])
-        except:
+        except Exception as e:
             print(estimator_class + " failed! Returning NaN...")
+            print(f"Error: {e}")
             xhat.fill(np.nan)
         elapsed_time = time.perf_counter() - t0
         return xhat, elapsed_time

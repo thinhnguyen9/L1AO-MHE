@@ -1,4 +1,5 @@
 import numpy as np
+# import scipy
 
 class LinearSolver:
     """
@@ -12,6 +13,27 @@ class LinearSolver:
 
         self.bfgs_max_iters = max_iters
         self.bfgs_tol = tol     # tol for Ax - b
+    
+    def solve(self, A, b, method='direct-LU', x0=None, A_inv_guess=None):
+        if method == 'direct-LU':
+            x = np.linalg.solve(A, b)
+            # x = scipy.linalg.solve(A, b) # faster for symmetric A
+        elif method == 'direct-Cholesky':
+            try:
+                L = np.linalg.cholesky(A)
+                y = np.linalg.solve(L, b)
+                x = np.linalg.solve(L.T, y)
+            except:
+                x = np.linalg.solve(A, b)
+            # L, lower = cho_factor(A, lower=True)
+            # x = cho_solve((L, lower), b)
+        elif method == 'CG':
+            x = self.CG_linsol(A, b, x0=x0)
+        # elif method == 'BFGS':
+        #     H, x = self.BFGS_linsol(A, b, last_Ainv=A_inv_guess, x0=x0)
+        else:
+            raise ValueError(f"Unsupported linear solver method: {method}. Choose from direct-LU/direct-Cholesky/CG.")
+        return x
     
     def CG_linsol(self, A, b, x0=None):
         """

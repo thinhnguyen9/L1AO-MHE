@@ -16,7 +16,7 @@ class PCIPQP:
             self, alpha, ts,
             interior_point_barrier=None, interior_point_slack=None,
             enable_prediction=False,
-            linear_solver='np',     # 'np' (numpy - LU decomposition), 'cg' (conjugate gradient), 'bfgs' (BFGS quasi-Newton)
+            linear_solver='direct-LU', # direct-LU, direct-Cholesky, CG
             linear_solver_tol=1e-6, linear_solver_max_iters=100,
             l1ao_augmentation=None  # dict with keys 'a' and 'lpf_omega'
         ):
@@ -46,11 +46,12 @@ class PCIPQP:
         if self.gamma_s < 1e-12:     self.fixed_slack_variable = True
 
         # Linear solver
-        if linear_solver not in ['np', 'cg', 'bfgs']:
-            raise ValueError(f"Invalid linear solver: {linear_solver}. Must be 'np', 'cg', or 'bfgs'.")
         self.linear_solver_method = linear_solver
         self.linear_solver = LinearSolver(tol=linear_solver_tol, max_iters=linear_solver_max_iters)
         self._linear_solver_times = []
+        self._gradient_times = []
+        self._hessian_times = []
+        self._total_solver_times = []
         self._last_zdot = None
         self._last_Hess_inv = None
 
@@ -132,6 +133,7 @@ class PCIPQP:
         """
         Objective Jacobian: nabla_z_phi(t)
         """
+        t0 = time.perf_counter()                # uncomment to record computation time
         if self.has_inequality_constraints:
             c, s, _, _ = self.get_params(t)
             slack = s - (G@z - h)
@@ -139,12 +141,16 @@ class PCIPQP:
             nabla_z_B = (1./c) * (G.T @ inv_slack)
         else:
             nabla_z_B = 0.0
-        return H@z + f + nabla_z_B
-    
+        nabla_z_phi = H@z + f + nabla_z_B
+        t1 = time.perf_counter()                # uncomment to record computation time
+        self._gradient_times.append(t1 - t0)    # uncomment to record computation time
+        return nabla_z_phi
+
     def _nabla_zz_phi(self, H, f, z, G, h, t):
         """
         Objective Hessian: nabla_zz_phi(t)
         """
+        t0 = time.perf_counter()                # uncomment to record computation time
         if self.has_inequality_constraints:
             c, s, _, _ = self.get_params(t)
             slack = s - (G@z - h)
@@ -154,10 +160,23 @@ class PCIPQP:
             nabla_zz_B = (1./c) * (G.T @ weighted_G)
         else:
             nabla_zz_B = 0.0
-        return H + nabla_zz_B
+        nabla_zz_phi = H + nabla_zz_B
+        t1 = time.perf_counter()                # uncomment to record computation time
+        self._hessian_times.append(t1 - t0)     # uncomment to record computation time
+        return nabla_zz_phi
 
-    def dynamics(self, z0, t):
-        # t0 = time.perf_counter()
+    def dynamics(
+            self,
+            z0,
+            zdot0,
+            t,
+            l1ao_zdot0=None,
+            l1ao_sigma_hat0=None,
+            l1ao_nabla_z_phi_hat0=None
+        ):
+        t0 = time.perf_counter()                # uncomment to record computation time
+        
+        # %% Compute current gradient and Hessian
         nabla_z_phi = self._nabla_z_phi(
             H=self.H,
             f=self.f,
@@ -166,7 +185,6 @@ class PCIPQP:
             h=self.h,
             t=t
         )
-        # t1 = time.perf_counter()
         nabla_zz_phi = self._nabla_zz_phi(
             H=self.H,
             f=self.f,
@@ -175,10 +193,8 @@ class PCIPQP:
             h=self.h,
             t=t
         )
-        # t2 = time.perf_counter()
-
+        diff = self.H.shape[0] - self.H0.shape[0]
         if self.enable_prediction or self.enable_l1ao:
-            diff = self.H.shape[0] - self.H0.shape[0]
             nabla_z_phi0 = self._nabla_z_phi(
                 H=self.H0,
                 f=self.f0,
@@ -190,22 +206,11 @@ class PCIPQP:
             if diff > 0:
                 nabla_z_phi0 = np.hstack((nabla_z_phi0, nabla_z_phi[-diff:]))
 
-        # Prediction term
+        # %% Prediction term
         prediction = np.zeros_like(z0)
         if self.enable_prediction and t > 0.0:
 
             # Estimate nabla_zt_phi by finite differences
-            # diff = self.H.shape[0] - self.H0.shape[0]
-            # nabla_z_phi0 = self._nabla_z_phi(
-            #     H=self.H0,
-            #     f=self.f0,
-            #     z=z0[:-diff] if diff>0 else z0,
-            #     G=self.G0,
-            #     h=self.h0,
-            #     t=t-self.ts
-            # )
-            # if diff > 0:
-            #     nabla_z_phi0 = np.hstack((nabla_z_phi0, nabla_z_phi[-diff:]))
             prediction += (nabla_z_phi - nabla_z_phi0)/self.ts
 
             # nabla_zc_phi*cdot + nabla_zs_phi*sdot
@@ -218,87 +223,85 @@ class PCIPQP:
                 if not self.fixed_slack_variable:
                     nabla_zs_phi = (-1./c) * self.G.T @ (1./(slack**2))
                     prediction += nabla_zs_phi*sdot
-        # t3 = time.perf_counter()
 
-        # ================================= PCIP step ================================= #
+        # %% PCIP step
         correction = self.alpha * nabla_z_phi
-        A, b = nabla_zz_phi, - prediction - correction
 
-        t4 = time.perf_counter()
-        if self.linear_solver_method == 'np':
-            # --------- Direct solve using numpy (LU decomposition) --------- #
-            zdot = np.linalg.solve(A, b)
-        else:
-            # --------- Quasi-Newton methods --------- #
-            x0 = None
-            if self._last_zdot is not None and self._last_zdot.shape == b.shape:
-                # warm_start = self._last_zdot
-                x0 = np.hstack((self._last_zdot[12:], self._last_zdot[-12:]))
-            if self.linear_solver_method == 'cg':
-                # --------- Conjugate gradient --------- #
-                zdot = self.linear_solver.CG_linsol(A, b, x0=x0)
-            elif self.linear_solver_method == 'bfgs':
-                # --------- BFGS --------- #
-                if t > 0.0 and diff == 0:
-                    last_Hess_inv = self._last_Hess_inv
-                else:
-                    last_Hess_inv = np.linalg.inv(nabla_zz_phi)
-                self._last_Hess_inv, zdot = self.linear_solver.BFGS_linsol(A, b, last_Hess_inv, x0=x0)
-        t5 = time.perf_counter()
+        t1 = time.perf_counter()                # uncomment to record computation time
+        zdot = self.linear_solver.solve(
+            A      = nabla_zz_phi,
+            b      = - prediction - correction,
+            method = self.linear_solver_method,
+            x0     = zdot0
+        )
+        # # --------- BFGS --------- #
+        # if t > 0.0 and diff == 0:
+        #     last_Hess_inv = self._last_Hess_inv
+        # else:
+        #     last_Hess_inv = np.linalg.inv(nabla_zz_phi)
+        # self._last_Hess_inv, zdot = self.linear_solver.BFGS_linsol(A, b, last_Hess_inv, x0=x0)
+        t2 = time.perf_counter()                # uncomment to record computation time
+        total_linsol_time = t2 - t1             # uncomment to record computation time
 
-        # ================================= L1AO augmentation ================================= #
+        # %% L1AO augmentation
+        l1ao_zdot = None
+        l1ao_sigma_hat = None
+        l1ao_nabla_z_phi_hat = None
         if self.enable_l1ao:
             Nz = z0.shape[0]
             if Nz != self.dim:
-                self._l1ao_dimension_update(Nz)   # Update As, mu, self._l1ao_nabla_z_phi_hat0, self._l1ao_za_dot0
+                self._l1ao_dimension_update(Nz)   # Update As, mu
 
-            e = self._l1ao_nabla_z_phi_hat0 - nabla_z_phi0    # e(T). (self._l1ao_nabla_z_phi_hat0 - grad_phi) gives worse result
+            e = l1ao_nabla_z_phi_hat0 - nabla_z_phi0    # e(T). (self._l1ao_nabla_z_phi_hat0 - grad_phi) gives worse result
             h = self.mu @ e                 # h(T)
-            t6 = time.perf_counter()
-            # sigma_hat = np.linalg.solve(nabla_zz_phi, h)   # sigma_hat(T)
-            # --------- Quasi-Newton methods --------- #
-            x0 = None
-            if self._last_sigma_hat is not None and self._last_sigma_hat.shape == h.shape:
-                x0 = np.hstack((self._last_sigma_hat[12:], self._last_sigma_hat[-12:]))
-            sigma_hat = self.linear_solver.CG_linsol(nabla_zz_phi, h, x0=x0)
-            self._last_sigma_hat = sigma_hat.copy()
-            # ---------------------------------------- #
-            t7 = time.perf_counter()
-            za_dot = self._l1ao_lpf(self._l1ao_za_dot0, -sigma_hat)  # za_dot(T)
+            t3 = time.perf_counter()            # uncomment to record computation time
+            l1ao_sigma_hat = self.linear_solver.solve(  # sigma_hat(T)
+                A      = nabla_zz_phi,
+                b      = h,
+                method = self.linear_solver_method,
+                x0     = l1ao_sigma_hat0
+            )
+            t4 = time.perf_counter()            # uncomment to record computation time
+            l1ao_zdot = self._l1ao_lpf(l1ao_zdot0, -l1ao_sigma_hat)  # za_dot(T)
             # za_dot = np.zeros(Nz)  # debug
 
             # z(T+1)
-            zdot += za_dot
+            zdot += l1ao_zdot
 
             # Gradient prediction: grad_phi_hat(T+1)
-            grad_phi_hat = self._l1ao_nabla_z_phi_hat0 + (self.As@e + prediction + nabla_zz_phi@zdot + h)*self.ts
+            l1ao_nabla_z_phi_hat = l1ao_nabla_z_phi_hat0 + (self.As@e + prediction + nabla_zz_phi@zdot + h)*self.ts
 
-            # Save for next step
-            self._l1ao_za_dot0 = za_dot
-            self._l1ao_nabla_z_phi_hat0 = grad_phi_hat
-
-            self._linear_solver_times.append(t5 - t4 + t7 - t6)
+            total_linsol_time += t4 - t3        # uncomment to record computation time
         # ----------------------------------------------------------- #
-        else:
-            self._linear_solver_times.append(t5 - t4)
 
+        # %% Finishing
         # print("-----------------------------------")
         # print(f"Gradient time:      {(t1-t0)*1000:.2f} ms")
         # print(f"Hessian time:       {(t2-t1)*1000:.2f} ms")
         # print(f"Prediction time:    {(t3-t2)*1000:.2f} ms")
         # print(f"Linear solver time: {(t5-t4)*1000:.2f} ms")
         # print(f"Total time:         {(t5-t0)*1000:.2f} ms")
+        self._linear_solver_times.append(total_linsol_time)     # uncomment to record computation time
 
         self._last_zdot = zdot.copy()
         z = z0 + self.ts*zdot  # z(T+1)!!
-        return zdot, z
+
+        t5 = time.perf_counter()                    # uncomment to record computation time
+        self._total_solver_times.append(t5 - t0)    # uncomment to record computation time
+        return zdot, z, l1ao_zdot, l1ao_sigma_hat, l1ao_nabla_z_phi_hat
     
-    def get_mean_linsol_time(self, start_idx=0):
-        if len(self._linear_solver_times) == 0:
-            return 0.0
-        else:
-            return np.mean(self._linear_solver_times[start_idx:])
-    
+    def print_computation_times(self, start_idx=0):
+        gradient_time = np.mean(self._gradient_times[start_idx:])*1000
+        hessian_time = np.mean(self._hessian_times[start_idx:])*1000
+        linsol_time = np.mean(self._linear_solver_times[start_idx:])*1000
+        total_time = np.mean(self._total_solver_times[start_idx:])*1000
+        if self.enable_l1ao: print("------- PCIP+L1AO computation times -----------------")
+        else:                print("------- PCIP computation times ----------------------")
+        print(f"Mean gradient time:      {gradient_time:.4f} ms\t({gradient_time/total_time*100:.0f}%)")
+        print(f"Mean Hessian time:       {hessian_time:.4f} ms\t({hessian_time/total_time*100:.0f}%)")
+        print(f"Mean linear solver time: {linsol_time:.4f} ms\t({linsol_time/total_time*100:.0f}%)")
+        print(f"Mean total solver time:  {total_time:.4f} ms\t({total_time/total_time*100:.0f}%)")
+
     # %% L1AO augmentation methods %%
     def _l1ao_dimension_update(self, dim):
         """
@@ -309,22 +312,6 @@ class PCIPQP:
         self.As = np.diag([self.a]*dim)
         self.mu = np.diag([self.u]*dim)
         self.dim = dim
-
-        # T=0: initialize
-        if not hasattr(self, '_l1ao_nabla_z_phi_hat0') or not hasattr(self, '_l1ao_za_dot0'):
-            self._l1ao_nabla_z_phi_hat0 = np.zeros(dim)
-            self._l1ao_za_dot0 = np.zeros(dim)
-        
-        # T=1,...,N-1: growing horizon
-        else:
-            self._l1ao_nabla_z_phi_hat0 = np.hstack((
-                self._l1ao_nabla_z_phi_hat0,
-                self._l1ao_nabla_z_phi_hat0[-12:]
-            ))
-            self._l1ao_za_dot0 = np.hstack((
-                self._l1ao_za_dot0,
-                self._l1ao_za_dot0[-12:]
-            ))
 
     def _l1ao_lpf(self, x0, u):
         """

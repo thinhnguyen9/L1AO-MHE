@@ -16,7 +16,7 @@ class MHE():
             self, model, ts, N, X0, P0, xs, us,
             mhe_type="linearized_once", mhe_update="filtering", prior_method="zero",
             xmin=None, xmax=None,
-            solver="cvxpy", pcip_obj=None, l1ao_obj=None):
+            solver="cvxpy", pcip_obj=None):
         """
         Args:
             model: dynamical model object
@@ -56,8 +56,8 @@ class MHE():
             raise ValueError("mhe_update must be 'filtering', 'smoothing', or 'smoothing_naive'.")
         if prior_method not in ["zero", "ekf", "uniform"]:
             raise ValueError("prior_method must be 'zero', 'ekf', or 'uniform'.")
-        if solver not in ["cvxpy", "osqp", "cvxopt", "pcip", "pcip_l1ao"]:
-            raise ValueError("solver must be one of cvxpy/osqp/cvxopt/pcip/pcip_l1ao.")
+        if solver not in ["cvxpy", "osqp", "cvxopt", "pcip"]:
+            raise ValueError("solver must be one of cvxpy/osqp/cvxopt/pcip.")
         self.mhe_type = mhe_type
         self.mhe_update = mhe_update
         self.prior_method = prior_method
@@ -81,14 +81,10 @@ class MHE():
         self.P0 = P0
         self.X0 = X0
 
-        if self.solver in ["pcip", "pcip_l1ao"]:
+        if self.solver == "pcip":
             if pcip_obj is None:
                 raise ValueError("Missing 'pcip_obj'.")
             self.pcip = pcip_obj
-        if self.solver == "pcip_l1ao":
-            if l1ao_obj is None:
-                raise ValueError("Missing 'l1ao_obj'.")
-            self.l1ao = l1ao_obj
         
         self._solver_times = []
 
@@ -317,7 +313,7 @@ class MHE():
                 )
                 z = np.array(sol['x']).flatten()
             
-            elif self.solver in ["pcip", "pcip_l1ao"]: # only dynamics constraints!!
+            elif self.solver == "pcip": # only dynamics constraints!!
                 """ # Dynamics as equality constraints
                 # Lagrange multiplier v, length: N*Nx
                 # z = [x(0),..., x(N), w(0),..., w(N-1), v], length: (3N+1)*Nx
@@ -347,27 +343,35 @@ class MHE():
                 """
                 # z = [x(0), w(0), ..., w(N-1)]
                 # Initialize z0
-                if not hasattr(self, 'tvopt_z0'):    # T=0: initialize z=0
+                if not hasattr(self, 'pcip_z0'):    # T=0: initialize z=0
                     # z0    = np.zeros((self.Nx,))
                     z0 = X0
                     zdot0 = np.zeros((self.Nx,))
-                    if self.solver == "pcip_l1ao":
-                        za_dot0       = np.zeros((self.Nx,))
-                        grad_phi_hat0 = np.zeros((self.Nx,))
+                    if self.pcip.enable_l1ao:
+                        l1ao_zdot0            = np.zeros((self.Nx,))
+                        l1ao_sigma_hat0       = np.zeros((self.Nx,))
+                        l1ao_nabla_z_phi_hat0 = np.zeros((self.Nx,))
 
-                elif self.tvopt_z0.shape[0] < (N+1)*self.Nx: # horizon still growing
-                    z0    = np.hstack((self.tvopt_z0, self.tvopt_z0[-self.Nx : ]))
-                    zdot0 = np.hstack((self.tvopt_zdot0, self.tvopt_zdot0[-self.Nx : ]))
-                    if self.solver == "pcip_l1ao":
-                        za_dot0       = np.hstack((self.l1ao_za_dot0, self.l1ao_za_dot0[-self.Nx : ]))
-                        grad_phi_hat0 = np.hstack((self.l1ao_grad_phi_hat0, self.l1ao_grad_phi_hat0[-self.Nx : ]))
+                elif self.pcip_z0.shape[0] < (N+1)*self.Nx: # horizon still growing
+                    z0    = self.growing_horizon_extend_variables(self.pcip_z0)
+                    zdot0 = self.growing_horizon_extend_variables(self.pcip_zdot0)
+                    if self.pcip.enable_l1ao:
+                        l1ao_zdot0            = self.growing_horizon_extend_variables(self.l1ao_zdot0)
+                        l1ao_sigma_hat0       = self.growing_horizon_extend_variables(self.l1ao_sigma_hat0)
+                        l1ao_nabla_z_phi_hat0 = self.growing_horizon_extend_variables(self.l1ao_nabla_z_phi_hat0)
 
                 else:   # full horizon reached - size of z fixed
-                    z0    = self.tvopt_z0
-                    zdot0 = self.tvopt_zdot0
-                    if self.solver == "pcip_l1ao":
-                        za_dot0       = self.l1ao_za_dot0
-                        grad_phi_hat0 = self.l1ao_grad_phi_hat0
+                    z0    = self.pcip_z0
+                    zdot0 = self.pcip_zdot0
+                    if self.pcip.enable_l1ao:
+                        l1ao_zdot0            = self.l1ao_zdot0
+                        l1ao_sigma_hat0       = self.l1ao_sigma_hat0
+                        l1ao_nabla_z_phi_hat0 = self.l1ao_nabla_z_phi_hat0
+                
+                if not self.pcip.enable_l1ao:
+                    l1ao_zdot0 = None
+                    l1ao_sigma_hat0 = None
+                    l1ao_nabla_z_phi_hat0 = None
 
                 # Solve QP with PCIP / PCIP+L1AO
                 self.pcip.set_QP(
@@ -377,27 +381,21 @@ class MHE():
                     h=np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None,
                     t=tvec[-1]
                 )
-                zb_dot, zb = self.pcip.dynamics(z0, tvec[-1])
-
-                if self.solver == "pcip_l1ao":
-                    self.l1ao.set_QP(
-                        H=H,
-                        f=f,
-                        G=np.vstack((-matA, matA)) if self.has_inequality_constraints else None,
-                        h=np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None,
-                        t=tvec[-1]
-                    )
-                    za_dot, grad_phi_hat, z, zdot = self.l1ao.dynamics(z0, zdot0, za_dot0, grad_phi_hat0, zb_dot, tvec[-1])
-
-                    # Save for next time step (only L1AO): za_dot(T), grad_phi_hat(T+1)
-                    self.l1ao_za_dot0 = za_dot
-                    self.l1ao_grad_phi_hat0 = grad_phi_hat
-                else:
-                    z, zdot = zb, zb_dot
+                zdot, z, l1ao_zdot, l1ao_sigma_hat, l1ao_nabla_z_phi_hat = self.pcip.dynamics(
+                    z0                    = z0,
+                    zdot0                 = zdot0,
+                    t                     = tvec[-1],
+                    l1ao_zdot0            = l1ao_zdot0,
+                    l1ao_sigma_hat0       = l1ao_sigma_hat0,
+                    l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat0
+                )
                 
                 # Save for next time step: z(T+1), zdot(T)
-                self.tvopt_z0 = z
-                self.tvopt_zdot0 = zdot
+                self.pcip_z0 = z
+                self.pcip_zdot0 = zdot
+                self.l1ao_zdot0 = l1ao_zdot
+                self.l1ao_sigma_hat0 = l1ao_sigma_hat
+                self.l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat
             t1 = time.perf_counter()
             self._solver_times.append(t1 - t0)
 
@@ -515,6 +513,14 @@ class MHE():
         # self.uvec = u
         # return self.xvec
         return self.xvec[-1]      # x(T)
+    
+    def growing_horizon_extend_variables(self, z):
+        """
+        MHE at time k=0...N experiences growing problem size.
+        In this MHE class (single-shooting): z(T) = [x(0), w(0), ..., w(T-1)]
+        -> Extend z by simply repeating w(T-1)
+        """
+        return np.hstack((z, z[-self.Nx:]))
     
     def construct_X_from_X0(self, x0, A_seq, B_seq, G_seq, w_seq, u_seq):
         N = len(A_seq)

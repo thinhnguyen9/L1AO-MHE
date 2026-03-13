@@ -257,17 +257,20 @@ def main(
             rmse_lmhe3 = rmse(xvec[t0:], xhat_lmhe3[t0:])
             if keep_initial_guess: xhat_lmhe3[0] = x0.copy()
 
-        print(f"(k={t0:.0f} onwards)        RMSE            MHE step (ms)    Solver (ms)    Lin.sol. (ms)")
+        print(f"(k={t0:.0f} onwards)        RMSE            MHE step (ms)    Solver (ms)")
         if 'KF' in enabled_estimators:      print(f"KF                : {rmse_kf:.4f}\t\t{kf_time*1000./N:.4f}")
         if 'EKF' in enabled_estimators:     print(f"EKF               : {rmse_ekf:.4f}\t\t{ekf_time*1000./N:.4f}")
         if 'LMHE1' in enabled_estimators:
             spaces = " " * (10 - len(lmhe1_solver))
             print("LMHE1 (" + lmhe1_solver.upper() + ")" + spaces + f": {rmse_lmhe1:.4f}\t\t{lmhe1_time*1000./N:.4f}\t\t{lmhe1_obj.get_mean_solver_time(t0)*1000:.4f}")
-        if 'LMHE2' in enabled_estimators:   print(f"LMHE2 (PCIP)      : {rmse_lmhe2:.4f}\t\t{lmhe2_time*1000./N:.4f}\t\t{lmhe2_obj.get_mean_solver_time(t0)*1000:.4f}\t\t{lmhe2_pcip_obj.get_mean_linsol_time(t0)*1000:.4f}")
-        if 'LMHE3' in enabled_estimators:   print(f"LMHE3 (PCIP+L1AO) : {rmse_lmhe3:.4f}\t\t{lmhe3_time*1000./N:.4f}\t\t{lmhe3_obj.get_mean_solver_time(t0)*1000:.4f}\t\t{lmhe3_pcip_obj.get_mean_linsol_time(t0)*1000:.4f}")
+        if 'LMHE2' in enabled_estimators:   print(f"LMHE2 (PCIP)      : {rmse_lmhe2:.4f}\t\t{lmhe2_time*1000./N:.4f}\t\t{lmhe2_obj.get_mean_solver_time(t0)*1000:.4f}")
+        if 'LMHE3' in enabled_estimators:   print(f"LMHE3 (PCIP+L1AO) : {rmse_lmhe3:.4f}\t\t{lmhe3_time*1000./N:.4f}\t\t{lmhe3_obj.get_mean_solver_time(t0)*1000:.4f}")
         # if 'EKF' in enabled_estimators and 'LMHE1' in enabled_estimators:
         #     print("----------------------------")
         #     print(f"LMHE1-EKF RMSE: {np.sqrt(np.mean((xhat_lmhe1 - xhat_ekf)**2)):.4f}")
+
+        if 'LMHE2' in enabled_estimators:   lmhe2_pcip_obj.print_computation_times(t0)
+        if 'LMHE3' in enabled_estimators:   lmhe3_pcip_obj.print_computation_times(t0)
 
         # Save results of this instance
         if save_csv_simulation_instance:
