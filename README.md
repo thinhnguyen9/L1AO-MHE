@@ -1,9 +1,15 @@
 # Moving Horizon Estimation with 𝓛₁ Adaptive Optimizer
 
-- In this project, we improve both the accuracy and efficiency of MHE through a time-varying solver with an 𝓛₁-AO augmentation that compensates for the prediction inaccuracy, which is common in practice due to noisy sensors and lack of prior system knowledge.
-- While MHE is inherently time-varying, conventional approaches treat it as a sequence of independent, time-invariant problems and employ iterative solvers at each time step, which can be both inaccurate and computationally burdensome. In contrast, time-varying solvers track the optimal solution with fewer iterations by exploiting the temporal evolution of the problem, thereby reducing the computational load. 
-- Paper: ["Moving Horizon Estimation for Quadrotors: An 𝓛₁ Adaptive Optimizer Approach" (AIAA SciTech 2026)](https://arc.aiaa.org/doi/10.2514/6.2026-1959).
-- Simulation example:
+- `Paper:` ["Moving Horizon Estimation for Quadrotors: An 𝓛₁ Adaptive Optimizer Approach" (AIAA SciTech 2026)](https://arc.aiaa.org/doi/10.2514/6.2026-1959).
+- `What?` In this project, we build a very accurate and efficient solver for MHE/MPC based on time-varying convex optimization.
+- `Why?` Conventional approaches treat MHE/MPC as a sequence of independent, time-invariant optimization problems and employ iterative solvers (e.g., OSQP, CVXOPT) at each time step, which can be both inaccurate and computationally burdensome.
+- `How?` Time-varying solvers (e.g., PCIP) track the optimal solution with fewer iterations by exploiting the temporal evolution of the problem, thereby reducing computational load. An 𝓛₁-AO augmentation further improves performance by compensating for prediction inaccuracies, which are common in practice due to noisy sensors and lack of prior system knowledge.
+
+<p align="center">
+  <img src="./media/estimation_error_demo.png" alt="Estimation error demo" width="400" />
+</p>
+
+- `Simulation example:`
     - Quadrotor v2:
         - 12-dimensional, 6 directly measureable states, direct thrust and torque inputs without constraints.
         - Simulate manually: `py simulation\quadrotor2\simulate_quadrotor.py`
@@ -13,6 +19,9 @@
             2. Use the correct JSON file name in `simulation\quadrotor2\simulate_scenario.py`
             3. Run `py simulation\quadrotor2\simulate_scenario.py`
 
+<p align="center">
+  <img src="./media/quadrotor_animation.gif" alt="Quadrotor animation" width="300" />
+</p>
 
 ## Project structure
 - `models/` — dynamical systems used in simulation:
