@@ -53,15 +53,17 @@ def main(
         lmhe1_solver="osqp",
         lmhe2_pcip_alpha=1./.01,
         lmhe2_pcip_prediction=True,
+        lmhe2_interior_point_barrier=None,
+        lmhe2_interior_point_slack=None,
         lmhe3_pcip_alpha=1./.01,
         lmhe3_pcip_prediction=True,
         lmhe3_l1ao_As=-.1,
         lmhe3_l1ao_omega=50.,
-        interior_point_barrier=None,
-        interior_point_slack=None,
+        lmhe3_interior_point_barrier=None,
+        lmhe3_interior_point_slack=None,
         xmin=None,
         xmax=None,
-        linear_solver="cg"
+        linear_solver="direct-LU"
     ):
     
     # ----------------------- Quadrotor -----------------------
@@ -188,8 +190,8 @@ def main(
                 alpha               = lmhe2_pcip_alpha,
                 ts                  = ts,
                 enable_prediction   = lmhe2_pcip_prediction,
-                interior_point_barrier = interior_point_barrier,
-                interior_point_slack   = interior_point_slack,
+                interior_point_barrier = lmhe2_interior_point_barrier,
+                interior_point_slack   = lmhe2_interior_point_slack,
                 linear_solver          = linear_solver
             )
             lmhe2_obj = MHE(
@@ -213,8 +215,8 @@ def main(
                 alpha               = lmhe3_pcip_alpha,
                 ts                  = ts,
                 enable_prediction   = lmhe3_pcip_prediction,
-                interior_point_barrier = interior_point_barrier,
-                interior_point_slack   = interior_point_slack,
+                interior_point_barrier = lmhe3_interior_point_barrier,
+                interior_point_slack   = lmhe3_interior_point_slack,
                 linear_solver          = linear_solver,
                 l1ao_augmentation      = {"a": lmhe3_l1ao_As, "lpf_omega": lmhe3_l1ao_omega}
             )
@@ -269,8 +271,8 @@ def main(
         #     print("----------------------------")
         #     print(f"LMHE1-EKF RMSE: {np.sqrt(np.mean((xhat_lmhe1 - xhat_ekf)**2)):.4f}")
 
-        if 'LMHE2' in enabled_estimators:   lmhe2_pcip_obj.print_computation_times(t0)
-        if 'LMHE3' in enabled_estimators:   lmhe3_pcip_obj.print_computation_times(t0)
+        # if 'LMHE2' in enabled_estimators:   lmhe2_pcip_obj.print_computation_times(t0)
+        # if 'LMHE3' in enabled_estimators:   lmhe3_pcip_obj.print_computation_times(t0)
 
         # Save results of this instance
         if save_csv_simulation_instance:
@@ -341,11 +343,11 @@ def main(
             if 'EKF' in enabled_estimators:
                 plt.plot(tvec, xhat_ekf[:,idx]*(180/np.pi if rad2deg else 1), color='tab:red', ls='-', lw=1.5, label='EKF')
             if 'LMHE1' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe1[:,idx]*(180/np.pi if rad2deg else 1), color='tab:blue', ls='-', lw=1.5, label='LMHE1')
+                plt.plot(tvec, xhat_lmhe1[:,idx]*(180/np.pi if rad2deg else 1), color='tab:blue', ls='-', lw=1.5, label=f"MHE ({lmhe1_solver.upper()})")
             if 'LMHE2' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe2[:,idx]*(180/np.pi if rad2deg else 1), color='tab:orange', ls='-', lw=1.5, label='LMHE2')
+                plt.plot(tvec, xhat_lmhe2[:,idx]*(180/np.pi if rad2deg else 1), color='tab:orange', ls='-', lw=1.5, label="MHE (PCIP)")
             if 'LMHE3' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe3[:,idx]*(180/np.pi if rad2deg else 1), color='tab:green', ls='-', lw=1.5, label='LMHE3')
+                plt.plot(tvec, xhat_lmhe3[:,idx]*(180/np.pi if rad2deg else 1), color='tab:green', ls='-', lw=1.5, label="MHE (PCIP+L1AO)")
             plt.grid()
             # plt.ylim((-2,2))
             leg = plt.legend()
@@ -447,9 +449,9 @@ def main(
             plt.subplot(211)
             plt.title('Estimation error')
             plt.plot(tvec, err_ekf, color='tab:red', ls='-', lw=1.5, label='EKF')
-            if 'LMHE1' in enabled_estimators:   plt.plot(tvec, err_lmhe1, color='tab:blue', ls='-', lw=1.5, label='LMHE1')
-            if 'LMHE2' in enabled_estimators:   plt.plot(tvec, err_lmhe2, color='tab:orange', ls='-', lw=1.5, label='LMHE2')
-            if 'LMHE3' in enabled_estimators:   plt.plot(tvec, err_lmhe3, color='tab:green', ls='-', lw=1.5, label='LMHE3')
+            if 'LMHE1' in enabled_estimators:   plt.plot(tvec, err_lmhe1, color='tab:blue', ls='-', lw=1.5, label=f"MHE ({lmhe1_solver.upper()})")
+            if 'LMHE2' in enabled_estimators:   plt.plot(tvec, err_lmhe2, color='tab:orange', ls='-', lw=1.5, label="MHE (PCIP)")
+            if 'LMHE3' in enabled_estimators:   plt.plot(tvec, err_lmhe3, color='tab:green', ls='-', lw=1.5, label="MHE (PCIP+L1AO)")
             # plt.yscale('log')
             plt.grid()
             plt.xlabel('Time (s)')

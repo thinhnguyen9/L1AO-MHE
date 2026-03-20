@@ -82,34 +82,33 @@ class PCIPQP:
         # self.G0 = None
         # self.h0 = None
         # --------------------------------------- #
-        if self.enable_prediction:
-            if hasattr(self, 'H') and hasattr(self, 'f'):
-                self.H0 = self.H
-                self.f0 = self.f
-            else:
-                self.H0 = H
-                self.f0 = f
-            if self.has_inequality_constraints:
-                if hasattr(self, 'G') and hasattr(self, 'h'):
-                    self.G0 = self.G
-                    self.h0 = self.h
-                else:
-                    self.G0 = G
-                    self.h0 = h
-            else:
-                self.G0 = None
-                self.h0 = None
+        if hasattr(self, 'H') and hasattr(self, 'f'):
+            self.H0 = self.H
+            self.f0 = self.f
+        else:
+            self.H0 = H
+            self.f0 = f
         self.H = H
         self.f = f
+        
         if self.has_inequality_constraints:
+            if hasattr(self, 'G') and hasattr(self, 'h'):
+                self.G0 = self.G
+                self.h0 = self.h
+            else:
+                self.G0 = G
+                self.h0 = h
             self.G = G
             self.h = h
         else:
+            self.G0 = None
+            self.h0 = None
             self.G = None
             self.h = None
     
     def get_params(self, t):
-        c = saturate(self.c0 * np.exp(self.gamma_c*t), self.c0, self.cmax)
+        # c = saturate(self.c0 * np.exp(self.gamma_c*t), self.c0, self.cmax)
+        c = self.c0 * np.exp(self.gamma_c*t)    # continuous c gives better performance (but too large, gives overflow warning)
         s = self.s0 * np.exp(-self.gamma_s*t)
         cdot = self.gamma_c * c
         sdot = -self.gamma_s * s
