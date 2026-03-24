@@ -131,26 +131,32 @@ def main(
     # ----------------------- Run estimation -----------------------
     for loop in range(loops):
         print("================ Simulation instance " + str(loop+1) + " of " + str(loops) + " ================")
-        tvec, x0, xvec, uvec, yvec = sim.simulate_quadrotor_lqr_control(
-                seed                = loop,    # for deterministic measurement noise generation
-                traj_mode           = trajectory_shape,
-                zero_disturbance    = zero_process_noise,
-                zero_noise          = zero_measurement_noise,
-                measurement_delay   = measurement_delay,
-                # time_varying_dynamics = time_varying_dynamics
+
+        # Random initial state
+        x0 = rng.uniform(low=x0_stds[0], high=x0_stds[1])
+
+        # Run simulation
+        tvec, xvec, uvec, yvec = sim.simulate_quadrotor_lqr_control(
+            seed                = loop,    # for deterministic measurement noise generation
+            traj_mode           = trajectory_shape,
+            x0                  = x0,
+            xref                = None,
+            zero_disturbance    = zero_process_noise,
+            zero_noise          = zero_measurement_noise,
+            measurement_delay   = measurement_delay
         )
-        # Initial estimate variation
-        x0norm = 10.
-        if np.linalg.norm(x0_stds) > 1e-6:
-            x0var = rng.uniform(low=x0_stds[0], high=x0_stds[1])
-            norm_x0var = np.linalg.norm(x0var)
-            if norm_x0var == 0.:
-                x0var = np.zeros(drone.Nx)
-                x0var[0] = x0norm
-                x0 = x0 + x0var
-            else:
-                x0 = x0 + x0norm*x0var/norm_x0var  # normalize so that norm(e0)=1
-        # x0 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2*np.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
+        # # Initial estimate variation
+        # x0norm = 10.
+        # if np.linalg.norm(x0_stds) > 1e-6:
+        #     x0var = rng.uniform(low=x0_stds[0], high=x0_stds[1])
+        #     norm_x0var = np.linalg.norm(x0var)
+        #     if norm_x0var == 0.:
+        #         x0var = np.zeros(drone.Nx)
+        #         x0var[0] = x0norm
+        #         x0 = x0 + x0var
+        #     else:
+        #         x0 = x0 + x0norm*x0var/norm_x0var  # normalize so that norm(e0)=1
+        # # x0 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2*np.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
         
         # Initialize estimators - must be done every loop
         if 'KF' in enabled_estimators:
@@ -174,7 +180,7 @@ def main(
                 model           = drone_est,
                 ts              = sim.get_time_step(),
                 N               = mhe_horizon,
-                X0              = x0,
+                X0              = xhover_est,
                 P0              = P0,
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
@@ -198,7 +204,7 @@ def main(
                 model           = drone_est,
                 ts              = sim.get_time_step(),
                 N               = mhe_horizon,
-                X0              = x0,
+                X0              = xhover_est,
                 P0              = P0,
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
@@ -224,7 +230,7 @@ def main(
                 model           = drone_est,
                 ts              = sim.get_time_step(),
                 N               = mhe_horizon,
-                X0              = x0,
+                X0              = xhover_est,
                 P0              = P0,
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
@@ -239,25 +245,25 @@ def main(
 
         N = len(tvec)
         if 'KF' in enabled_estimators:
-            xhat_kf, kf_time = sim.run_estimation(SKF, x0)
+            xhat_kf, kf_time = sim.run_estimation(SKF, xhover_est)
             rmse_kf = rmse(xvec[t0:], xhat_kf[t0:])
-            if keep_initial_guess: xhat_kf[0] = x0.copy()
+            if keep_initial_guess: xhat_kf[0] = xhover_est.copy()
         if 'EKF' in enabled_estimators:
-            xhat_ekf, ekf_time = sim.run_estimation(EKF, x0)
+            xhat_ekf, ekf_time = sim.run_estimation(EKF, xhover_est)
             rmse_ekf = rmse(xvec[t0:], xhat_ekf[t0:])
-            if keep_initial_guess: xhat_ekf[0] = x0.copy()
+            if keep_initial_guess: xhat_ekf[0] = xhover_est.copy()
         if 'LMHE1' in enabled_estimators:
-            xhat_lmhe1, lmhe1_time = sim.run_estimation(lmhe1_obj, x0)
+            xhat_lmhe1, lmhe1_time = sim.run_estimation(lmhe1_obj, xhover_est)
             rmse_lmhe1 = rmse(xvec[t0:], xhat_lmhe1[t0:])
-            if keep_initial_guess: xhat_lmhe1[0] = x0.copy()
+            if keep_initial_guess: xhat_lmhe1[0] = xhover_est.copy()
         if 'LMHE2' in enabled_estimators:
-            xhat_lmhe2, lmhe2_time = sim.run_estimation(lmhe2_obj, x0)
+            xhat_lmhe2, lmhe2_time = sim.run_estimation(lmhe2_obj, xhover_est)
             rmse_lmhe2 = rmse(xvec[t0:], xhat_lmhe2[t0:])
-            if keep_initial_guess: xhat_lmhe2[0] = x0.copy()
+            if keep_initial_guess: xhat_lmhe2[0] = xhover_est.copy()
         if 'LMHE3' in enabled_estimators:
-            xhat_lmhe3, lmhe3_time = sim.run_estimation(lmhe3_obj, x0)
+            xhat_lmhe3, lmhe3_time = sim.run_estimation(lmhe3_obj, xhover_est)
             rmse_lmhe3 = rmse(xvec[t0:], xhat_lmhe3[t0:])
-            if keep_initial_guess: xhat_lmhe3[0] = x0.copy()
+            if keep_initial_guess: xhat_lmhe3[0] = xhover_est.copy()
 
         print(f"(k={t0:.0f} onwards)        RMSE            MHE step (ms)    Solver (ms)")
         if 'KF' in enabled_estimators:      print(f"KF                : {rmse_kf:.4f}\t\t{kf_time*1000./N:.4f}")

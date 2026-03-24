@@ -175,10 +175,21 @@ class Simulator():
                     radius = 0.3    # m
                     omega = 5.    # rad/s
                     # vz = .1        # m/s
-                    z0 = 1.
                     dz = .1
-                    x0 = np.array([radius, 0., z0, 0., 0., 0., 0., 0., 0., 0., 0., 0.])
-                    xref = np.array([0., 0., z0, 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+                    if x0 is None:
+                        center = np.array([0., 0., 1.])
+                        ref_angles = np.array([0., 0., 0.])
+                        x0 = np.array([ center[0] + radius, center[1], center[2],
+                                        0., 0., 0.,
+                                        ref_angles[0], ref_angles[1], ref_angles[2],
+                                        0., 0., 0. ])
+                    else:
+                        center = x0[0:3] - np.array([radius, 0., 0.])
+                        ref_angles = np.round(x0[6:9] / (2*np.pi)) * 2*np.pi
+                    xref = np.array([ 0., 0., 0.,
+                                      0., 0., 0.,
+                                      ref_angles[0], ref_angles[1], ref_angles[2],
+                                      0., 0., 0. ])
             elif traj_mode == "triangle":
                 if type(self.sys).__name__ == 'Quadrotor1':
                     pass
@@ -296,7 +307,6 @@ class Simulator():
 
         wp_idx = 0
         timer = 0.
-        X0 = x0.copy()
         yvec[:measurement_delay] = self.sys.getOutput(x0, vvec[0,:])
         for i in range(self.N):
             # if i % 126 == 0:
@@ -313,10 +323,10 @@ class Simulator():
                 elif type(self.sys).__name__ == 'Quadrotor2':
                     # omega += .001
                     # omega = min(omega, 5.)
-                    xref[0] = radius * cos(omega*self.tvec[i])
-                    xref[1] = radius * sin(omega*self.tvec[i])
+                    xref[0] = center[0] + radius * cos(omega*self.tvec[i])
+                    xref[1] = center[1] + radius * sin(omega*self.tvec[i])
                     # xref[2] = z0 + vz * self.tvec[i]
-                    xref[2] = z0 + dz * sin(omega*self.tvec[i])
+                    xref[2] = center[2] + dz * sin(omega*self.tvec[i])
                     xref[3] = -radius * omega * sin(omega*self.tvec[i])
                     xref[4] = radius * omega * cos(omega*self.tvec[i])
                     # xref[5] = vz
@@ -363,7 +373,7 @@ class Simulator():
         self.xvec = xvec
         self.uvec = uvec
         self.yvec = yvec
-        return self.tvec, X0, xvec, uvec, yvec
+        return self.tvec, xvec, uvec, yvec
     
 
     def simulate_free_response(self, x0, u=None, zero_disturbance=False, zero_noise=False):
