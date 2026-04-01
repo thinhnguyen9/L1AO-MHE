@@ -3,7 +3,7 @@ from math import sin, cos
 import cvxpy as cp
 import osqp
 from scipy import sparse
-from cvxopt import matrix, solvers
+import cvxopt
 # from scipy.optimize import minimize, LinearConstraint
 import copy
 from src.utils import build_mhe_qp_multiple_shooting, build_mhe_qp_equality_constraints_lagrangian, build_mhe_qp_single_shooting
@@ -14,9 +14,9 @@ class MHE():
 
     def __init__(
             self, model, ts, N, X0, P0, xs, us,
-            mhe_type="linearized_once", mhe_update="filtering", prior_method="zero",
+            mhe_type="linearized_once", mhe_update="filtering", prior_method="zero", mhe_shooting="single",
             xmin=None, xmax=None,
-            solver="cvxpy", pcip_obj=None):
+            solver="osqp", pcip_obj=None):
         """
         Args:
             model: dynamical model object
@@ -26,20 +26,20 @@ class MHE():
             P0: covariance of initial state (shape: (Nx, Nx))
             xs, us: linearization point
             mhe_type: "linearized_once" to linearize at xs, us,
-                      "linearized_every" to linearize at each step,
-                      "nonlinear" to use the nonlinear dynamics (very slow)
+                      "linearized_every" to linearize at each step
             mhe_update: "filtering" use x(T-N|T-N), i.e. do not override xvec
                         "smoothing" use x(T-N|T) and adjust arrival cost (Rawlings2017 chap 4.3.4)
                         "smoothing_naive" use x(T-N|T) but do not adjust arrival cost (like most papers)
             prior_method: "zero" to use zero prior weighting,
                           "ekf" to use the EKF covariance update,
                           "uniform" to use a fixed prior weighting P0
+            mhe_shooting: "single" gives small & dense QP, z=[x0, w0...w(N-1)],
+                          "multiple" gives large & sparse QP, z=[x0...xN, w0...w(N-1)]
             xmin, xmax: state constraints (shape: (Nx,)), optional
-            solver: "cvxpy" to use CVXPY parser with OSQP (default),
+            solver: "cvxpy" to use CVXPY parser with OSQP,
                     "osqp" to use OSQP directly without parser (faster) (sparse QP),
                     "cvxopt" to use cvxopt directly (dense QP),
-                    "pcip" to use PCIPQP solver,
-                    "pcip_l1ao" to use PCIPQP + L1AOQP
+                    "pcip" to use PCIPQP solver (possibly with L1AO)
         """
         self.model = model
         self.Nx = model.Nx  # states
@@ -50,17 +50,20 @@ class MHE():
         
         self.xs = xs
         self.us = us
-        if mhe_type not in ["linearized_once", "linearized_every", "nonlinear"]:
-            raise ValueError("mhe_type must be 'linearized_once', 'linearized_every', or 'nonlinear'.")
+        if mhe_type not in ["linearized_once", "linearized_every"]:
+            raise ValueError("mhe_type must be 'linearized_once' or 'linearized_every'.")
         if mhe_update not in ["filtering", "smoothing", "smoothing_naive"]:
             raise ValueError("mhe_update must be 'filtering', 'smoothing', or 'smoothing_naive'.")
         if prior_method not in ["zero", "ekf", "uniform"]:
             raise ValueError("prior_method must be 'zero', 'ekf', or 'uniform'.")
         if solver not in ["cvxpy", "osqp", "cvxopt", "pcip"]:
             raise ValueError("solver must be one of cvxpy/osqp/cvxopt/pcip.")
+        if mhe_shooting not in ["single", "multiple"]:
+            raise ValueError("mhe_shooting must be 'single' or 'multiple'.")
         self.mhe_type = mhe_type
         self.mhe_update = mhe_update
         self.prior_method = prior_method
+        self.mhe_shooting = mhe_shooting
         if xmin is not None and xmax is not None:
             self.has_inequality_constraints = True
             self.xmin, self.xmax = xmin, xmax
@@ -80,6 +83,14 @@ class MHE():
         self.Pvec1[0] = P0
         self.P0 = P0
         self.X0 = X0
+
+        if self.solver == "cvxopt":
+            cvxopt.solvers.options['abstol'] = 1e-6
+            cvxopt.solvers.options['reltol'] = 1e-6
+            cvxopt.solvers.options['feastol'] = 1e-6
+            cvxopt.solvers.options['maxiters'] = 100
+            cvxopt.solvers.options['show_progress'] = False
+            cvxopt.solvers.options['refinement'] = 0
 
         if self.solver == "pcip":
             if pcip_obj is None:
@@ -239,42 +250,86 @@ class MHE():
                 P0_inv = np.zeros((self.Nx, self.Nx))
             else:
                 P0_inv = np.linalg.inv(P0)
-            H, f, matA = build_mhe_qp_single_shooting(
-                A_seq, B_seq, G_seq, C_seq, Qinv_seq[:-1], Rinv_seq, X0, P0_inv, u, y,
-                smoothing_adjustment=(self.mhe_update=="smoothing"),
-                Q_seq=Q_seq, R_seq=R_seq
-            )
-
-            # State constraints
-            if self.has_inequality_constraints:
-                # [dx0...dxN] = [x0...xN] - xnom = matA @ z
-                # [x0...xN] in [xmin, xmax]  <=>  matA @ z = [dx0...dxN] in [xmin, xmax] - xnom
-                zmin = np.kron(np.ones((N+1,)), self.xmin) - xnom.flatten()
-                zmax = np.kron(np.ones((N+1,)), self.xmax) - xnom.flatten()     # zmin <= matA @ z <= zmax
             
+            # ------------------------ Single shooting ------------------------ #
+            if self.mhe_shooting == "single":
+                H, f, matA = build_mhe_qp_single_shooting(
+                    A_seq, B_seq, G_seq, C_seq, Qinv_seq[:-1], Rinv_seq, X0, P0_inv, u, y,
+                    smoothing_adjustment=(self.mhe_update=="smoothing"),
+                    Q_seq=Q_seq, R_seq=R_seq
+                )
+
+                # State constraints
+                if self.has_inequality_constraints:
+                    # [dx0...dxN] = [x0...xN] - xnom = matA @ z
+                    # [x0...xN] in [xmin, xmax]  <=>  matA @ z = [dx0...dxN] in [xmin, xmax] - xnom
+                    A_ineq = matA.copy()
+                    zmin = np.kron(np.ones((N+1,)), self.xmin) - xnom.flatten()
+                    zmax = np.kron(np.ones((N+1,)), self.xmax) - xnom.flatten()     # zmin <= A_ineq @ z <= zmax
+            
+            # ------------------------ Multiple shooting ------------------------ #
+            elif self.mhe_shooting == "multiple":
+                H, f, A_eq, b_eq = build_mhe_qp_multiple_shooting(
+                    A_seq, B_seq, G_seq, C_seq, Qinv_seq[:-1], Rinv_seq, X0, P0_inv, u, y,
+                    smoothing_adjustment=(self.mhe_update=="smoothing"),
+                    Q_seq=Q_seq, R_seq=R_seq
+                )
+
+                # State constraints
+                if self.has_inequality_constraints:
+                    A_ineq = np.hstack((
+                        np.eye((N+1)*self.Nx),
+                        np.zeros(((N+1)*self.Nx, N*self.Nx))
+                    ))  # extract x(0)...x(N) from z
+                    zmin = np.kron(np.ones((N+1,)), self.xmin) - xnom.flatten()
+                    zmax = np.kron(np.ones((N+1,)), self.xmax) - xnom.flatten()     # zmin <= A_ineq @ z <= zmax
+            
+            # ------------------------ Initialize z0 ------------------------ #
+            # T=0: initialize z=0 (applicable to both single & multiple shooting)
+            if T == 0:
+                # z0    = np.zeros((self.Nx,))
+                z0 = X0
+                if self.solver == "pcip":
+                    zdot0 = np.zeros((self.Nx,))
+                    if self.pcip.enable_l1ao:
+                        l1ao_zdot0            = np.zeros((self.Nx,))
+                        l1ao_sigma_hat0       = np.zeros((self.Nx,))
+                        l1ao_nabla_z_phi_hat0 = np.zeros((self.Nx,))
+
+            # horizon still growing
+            elif T <= self.N:
+                z0 = self.growing_horizon_extend_variables(self.z0)
+                if self.solver == "pcip":
+                    zdot0 = self.growing_horizon_extend_variables(self.pcip_zdot0)
+                    if self.pcip.enable_l1ao:
+                        l1ao_zdot0            = self.growing_horizon_extend_variables(self.l1ao_zdot0)
+                        l1ao_sigma_hat0       = self.growing_horizon_extend_variables(self.l1ao_sigma_hat0)
+                        l1ao_nabla_z_phi_hat0 = self.growing_horizon_extend_variables(self.l1ao_nabla_z_phi_hat0)
+            
+            # full horizon reached - size of z fixed
+            else:
+                z0 = self.z0
+                if self.solver == "pcip":
+                    zdot0 = self.pcip_zdot0
+                    if self.pcip.enable_l1ao:
+                        l1ao_zdot0            = self.l1ao_zdot0
+                        l1ao_sigma_hat0       = self.l1ao_sigma_hat0
+                        l1ao_nabla_z_phi_hat0 = self.l1ao_nabla_z_phi_hat0
+                        
             t0 = time.perf_counter()
+            # ------------------------ CVXPY ------------------------ #
             if self.solver == "cvxpy":
-                """ # Dynamics as equality constraints
-                H, f, A_eq, b_eq = build_mhe_qp_with_dyn_constraints(A_seq, B_seq, G_seq, C_seq, self.Q_inv, self.R_inv,
-                                                                     X0, P0_inv, u, y)
-
-                # Variable z = [x0...xN, w0...w(N-1)]
-                z = cp.Variable(((2*N+1)*self.Nx,))
                 constraints = []
+                if self.mhe_shooting == "single":
+                    z = cp.Variable(((N+1)*self.Nx,))       # z = [x(0), w(0)...w(T-1)]
+                elif self.mhe_shooting == "multiple":
+                    z = cp.Variable(((2*N+1)*self.Nx,))     # z = [x(0)...x(T), w(0)...w(T-1)]
+                    if N > 0:
+                        constraints.append(A_eq @ z == b_eq)
+                
                 cost = 0.5 * cp.quad_form(z, cp.psd_wrap(H)) + f @ z
-                if N>0: constraints.append(A_eq @ z == b_eq)
-                """
-                # Variable z = [x0, w0...w(N-1)]
-                z = cp.Variable(((N+1)*self.Nx,))
-                constraints = []
-                # constraints.append(z[0] >= 0.)
-                # constraints.append(z[1] >= 0.)
-                # constraints.append(z[2] <= 0.)
-                # constraints.append(z[8] >= 0.)
-                # constraints.append(z[8] >= -np.pi/36)
-                # constraints.append(z[8] <= np.pi/36)
-                cost = 0.5 * cp.quad_form(z, cp.psd_wrap(H)) + f @ z
-
+                if self.has_inequality_constraints:
+                    constraints.append(np.vstack((-A_ineq, A_ineq)) @ z <= np.hstack((-zmin, zmax)))
                 prob = cp.Problem(cp.Minimize(cost), constraints)
                 # prob.solve(solver=cp.OSQP, warm_start=True)
                 # prob.solve(solver=cp.ECOS, feastol=1e-04, reltol=1e-6, abstol=1e-3, verbose=True)
@@ -289,122 +344,85 @@ class MHE():
                 # xvec = z.value[0:(N+1)*self.Nx].reshape((N+1, self.Nx))
                 z = z.value
             
+            # ------------------------ OSQP ------------------------ #
             elif self.solver == "osqp": # TODO: same tolerances for all solvers?
                 prob = osqp.OSQP()
-                prob.setup(
-                    P=sparse.csc_matrix(H),
-                    q=f,
-                    A=sparse.csc_matrix(matA) if self.has_inequality_constraints else None,
-                    l=zmin if self.has_inequality_constraints else None,
-                    u=zmax if self.has_inequality_constraints else None,
-                    warm_start=True, verbose=False
-                )
+                if self.mhe_shooting == "single":
+                    prob.setup(
+                        P=sparse.csc_matrix(H),
+                        q=f,
+                        A=sparse.csc_matrix(A_ineq) if self.has_inequality_constraints else None,
+                        l=zmin if self.has_inequality_constraints else None,
+                        u=zmax if self.has_inequality_constraints else None,
+                        eps_abs=1e-6, eps_rel=1e-6, max_iter=4000, polish=False, warm_start=True, verbose=False
+                    )
+                    prob.warm_start(x=z0)
+                elif self.mhe_shooting == "multiple":
+                    prob.setup(
+                        P=sparse.csc_matrix(H),
+                        q=f,
+                        A=sparse.csc_matrix(np.vstack((A_eq, A_ineq))) if self.has_inequality_constraints else sparse.csc_matrix(A_eq),
+                        l=np.hstack((b_eq, zmin)) if self.has_inequality_constraints else b_eq,
+                        u=np.hstack((b_eq, zmax)) if self.has_inequality_constraints else b_eq,
+                        eps_abs=1e-6, eps_rel=1e-6, max_iter=4000, polish=False, warm_start=True, verbose=False
+                    )
+                    prob.warm_start(x=z0[:(2*N+1)*self.Nx])   # exclude Lagrange multipliers
                 res = prob.solve()
                 if res.info.status != 'solved':
                     raise ValueError('OSQP did not solve the problem! Time step: ' + str(T))
                 z = res.x
 
+            # ------------------------ CVXOPT ------------------------ #
             elif self.solver == "cvxopt":
-                solvers.options['show_progress'] = False
-                sol = solvers.qp(
-                    P=matrix(H), q=matrix(f),
-                    G=matrix(np.vstack((-matA, matA))) if self.has_inequality_constraints else None,
-                    h=matrix(np.hstack((-zmin, zmax))) if self.has_inequality_constraints else None
+                sol = cvxopt.solvers.qp(
+                    P=cvxopt.matrix(H),
+                    q=cvxopt.matrix(f),
+                    G=cvxopt.matrix(np.vstack((-A_ineq, A_ineq))) if self.has_inequality_constraints else None,
+                    h=cvxopt.matrix(np.hstack((-zmin, zmax))) if self.has_inequality_constraints else None,
+                    A=cvxopt.matrix(A_eq) if self.mhe_shooting=="multiple" else None,
+                    b=cvxopt.matrix(b_eq) if self.mhe_shooting=="multiple" else None,
+                    # TODO: warm starting only 'x' is even slower. Try all variables.
+                    # initvals={'x': cvxopt.matrix(z0[:(2*N+1)*self.Nx])} if self.mhe_shooting=="multiple" else {'x': cvxopt.matrix(z0)}
                 )
                 z = np.array(sol['x']).flatten()
             
-            elif self.solver == "pcip": # only dynamics constraints!!
-                """ # Dynamics as equality constraints
-                # Lagrange multiplier v, length: N*Nx
-                # z = [x(0),..., x(N), w(0),..., w(N-1), v], length: (3N+1)*Nx
-                H, f, A_eq, b_eq = build_mhe_qp_with_dyn_constraints(A_seq, B_seq, G_seq, C_seq, self.Q_inv, self.R_inv,
-                                                                     X0, P0_inv, u, y)
-                H, f = build_mhe_qp_with_dyn_constraints_lagrangian(H, f, A_eq, b_eq)
-                
-                # Initialize z0
-                if not hasattr(self, 'pcip_z0'):    # T=0: initialize z=0
-                    z0 = np.zeros((self.Nx,))
-                elif self.pcip_z0.shape[0] < (3*N+1)*self.Nx: # horizon still growing
-                    # z0 = np.zeros(((3*N+1)*self.Nx,))
-                    z0 = np.hstack((self.pcip_z0[ : N*self.Nx],                      # x(0)...x(N-1)
-                                    self.pcip_z0[(N-1)*self.Nx : N*self.Nx],         # x(N-1)
-                                    self.pcip_z0[N*self.Nx : (2*N-1)*self.Nx],       # w(0)...w(N-2)
-                                    self.pcip_z0[(2*N-2)*self.Nx : (2*N-1)*self.Nx], # w(N-2)
-                                    self.pcip_z0[(2*N-1)*self.Nx : ],                # v(0)...v(N-2)
-                                    self.pcip_z0[-self.Nx : ]))                      # v(N-2)
-                else:   # full horizon reached - size of z fixed
-                    z0 = self.pcip_z0
-
-                # solve QP with PCIP
-                self.pcip.set_QP(H, f)
-                _, z_hat = self.pcip.dynamics(z0, H, f)
-                self.pcip_z0 = z_hat
-                xvec = z_hat[:(N+1)*self.Nx].reshape((N+1, self.Nx)) + xnom
-                """
-                # z = [x(0), w(0), ..., w(N-1)]
-                # Initialize z0
-                if not hasattr(self, 'pcip_z0'):    # T=0: initialize z=0
-                    # z0    = np.zeros((self.Nx,))
-                    z0 = X0
-                    zdot0 = np.zeros((self.Nx,))
-                    if self.pcip.enable_l1ao:
-                        l1ao_zdot0            = np.zeros((self.Nx,))
-                        l1ao_sigma_hat0       = np.zeros((self.Nx,))
-                        l1ao_nabla_z_phi_hat0 = np.zeros((self.Nx,))
-
-                elif self.pcip_z0.shape[0] < (N+1)*self.Nx: # horizon still growing
-                    z0    = self.growing_horizon_extend_variables(self.pcip_z0)
-                    zdot0 = self.growing_horizon_extend_variables(self.pcip_zdot0)
-                    if self.pcip.enable_l1ao:
-                        l1ao_zdot0            = self.growing_horizon_extend_variables(self.l1ao_zdot0)
-                        l1ao_sigma_hat0       = self.growing_horizon_extend_variables(self.l1ao_sigma_hat0)
-                        l1ao_nabla_z_phi_hat0 = self.growing_horizon_extend_variables(self.l1ao_nabla_z_phi_hat0)
-
-                else:   # full horizon reached - size of z fixed
-                    z0    = self.pcip_z0
-                    zdot0 = self.pcip_zdot0
-                    if self.pcip.enable_l1ao:
-                        l1ao_zdot0            = self.l1ao_zdot0
-                        l1ao_sigma_hat0       = self.l1ao_sigma_hat0
-                        l1ao_nabla_z_phi_hat0 = self.l1ao_nabla_z_phi_hat0
-                
-                if not self.pcip.enable_l1ao:
-                    l1ao_zdot0 = None
-                    l1ao_sigma_hat0 = None
-                    l1ao_nabla_z_phi_hat0 = None
-
-                # Solve QP with PCIP / PCIP+L1AO
+            # ------------------------ PCIP ------------------------ #
+            elif self.solver == "pcip":
                 self.pcip.set_QP(
                     H=H,
                     f=f,
-                    G=np.vstack((-matA, matA)) if self.has_inequality_constraints else None,
+                    A=A_eq if self.mhe_shooting=="multiple" else None,
+                    b=b_eq if self.mhe_shooting=="multiple" else None,
+                    G=np.vstack((-A_ineq, A_ineq)) if self.has_inequality_constraints else None,
                     h=np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None,
+                    # sparse_matrices=True if self.mhe_shooting=="multiple" else False   # TODO
                     t=tvec[-1]
                 )
                 zdot, z, l1ao_zdot, l1ao_sigma_hat, l1ao_nabla_z_phi_hat = self.pcip.dynamics(
                     z0                    = z0,
+                    z0_unextended         = self.z0 if T>0 else z0,
                     zdot0                 = zdot0,
                     t                     = tvec[-1],
-                    l1ao_zdot0            = l1ao_zdot0,
-                    l1ao_sigma_hat0       = l1ao_sigma_hat0,
-                    l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat0
+                    l1ao_zdot0            = l1ao_zdot0 if self.pcip.enable_l1ao else None,
+                    l1ao_sigma_hat0       = l1ao_sigma_hat0 if self.pcip.enable_l1ao else None,
+                    l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat0 if self.pcip.enable_l1ao else None
                 )
                 
                 # Save for next time step: z(T+1), zdot(T)
-                self.pcip_z0 = z
                 self.pcip_zdot0 = zdot
                 self.l1ao_zdot0 = l1ao_zdot
                 self.l1ao_sigma_hat0 = l1ao_sigma_hat
                 self.l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat
+
+            # ------------------------ Linear MHE result ------------------------ #
             t1 = time.perf_counter()
             self._solver_times.append(t1 - t0)
-
-            # Result for linear MHE
-            # if z is None:   # CVXPY failed
-            #     xvec = xnom.copy()
-            # else:
-            xvec = self.construct_X_from_X0(z[:self.Nx], A_seq, B_seq, G_seq,
-                                            z[self.Nx:].reshape((N,self.Nx)), u)
+            self.z0 = z
+            if self.mhe_shooting == "single":
+                xvec = self.construct_X_from_X0(z[:self.Nx], A_seq, B_seq, G_seq,
+                                                z[self.Nx:].reshape((N,self.Nx)), u)
+            elif self.mhe_shooting == "multiple":
+                xvec = z[:(N+1)*self.Nx].reshape((N+1, self.Nx))
             if self.mhe_type == "linearized_once":
                 xvec = xvec + self.xs   # x(T-N)...x(T)
             elif self.mhe_type == "linearized_every":
@@ -517,10 +535,21 @@ class MHE():
     def growing_horizon_extend_variables(self, z):
         """
         MHE at time k=0...N experiences growing problem size.
-        In this MHE class (single-shooting): z(T) = [x(0), w(0), ..., w(T-1)]
-        -> Extend z by simply repeating w(T-1)
+            - Single shooting   : z(T) = [x(0), w(0)...w(T-1)] -> Extend z by simply repeating w(T-1)
+            - Multiple shooting : z(T) = [x(0)...x(T), w(0)...w(T-1), l(0)...l(T-1)] -> Repeat x(T), w(T-1), l(T-1)
         """
-        return np.hstack((z, z[-self.Nx:]))
+        if self.mhe_shooting == "single":
+            return np.hstack((z, z[-self.Nx:]))
+        elif self.mhe_shooting == "multiple":
+            N = int((z.shape[0]/self.Nx - 1) / 3)   # old horizon length
+            return np.hstack((
+                z[              0 : (N+1)*self.Nx  ],   # x(0)...x(N)
+                z[      N*self.Nx : (N+1)*self.Nx  ],   # x(N)
+                z[  (N+1)*self.Nx : (2*N+1)*self.Nx],   # w(0)...w(N-1)
+                z[    2*N*self.Nx : (2*N+1)*self.Nx],   # w(N-1)
+                z[(2*N+1)*self.Nx :                ],   # l(0)...l(N-1)
+                z[       -self.Nx :                ]    # l(N-1)
+            ))
     
     def construct_X_from_X0(self, x0, A_seq, B_seq, G_seq, w_seq, u_seq):
         N = len(A_seq)

@@ -1,5 +1,6 @@
 import numpy as np
-# import scipy
+import scipy
+from pypardiso import spsolve, factorized
 
 class LinearSolver:
     """
@@ -14,11 +15,44 @@ class LinearSolver:
         self.bfgs_max_iters = max_iters
         self.bfgs_tol = tol     # tol for Ax - b
     
-    def solve(self, A, b, method='direct-LU', x0=None, A_inv_guess=None):
-        if method == 'direct-LU':
+    def solve(self, A, b, method='direct-lu', x0=None, A_inv_guess=None):
+        """
+        Solve Ax=b.
+
+        Methods:
+        - direct-lu       : LU factorization (numpy.linalg.solve)
+        - direct-sym      : for symmetric A
+        - direct-spd      : for symmetric positive definite A
+        - direct-sparse   : for large sparse A
+        - direct-cholesky : for symmetric positive definite A
+        - iterative-cg1   : Conjugate Gradient (self.CG_linsol), for symmetric positive definite A
+        - iterative-cg2   : Conjugate Gradient (scipy.sparse.linalg.cg)
+        - iterative-gmres : GMRES, for general A
+
+        Single-shooting:
+        - Fastest: iterative-cg1, iterative-cg2, direct-sym, direct-spd
+        - Slowest: direct-cholesky, direct-lu, iterative-gmres, direct-sparse
+
+        Multiple-shooting:
+        - Fastest: direct-sparse
+        - Slowest: direct-cholesky, direct-lu, direct-sym
+        - Failed/too slow: direct-spd, iterative-cg1, iterative-cg2, iterative-gmres
+        """
+        if method == 'direct-lu':
             x = np.linalg.solve(A, b)
-            # x = scipy.linalg.solve(A, b) # faster for symmetric A
-        elif method == 'direct-Cholesky':
+        elif method == 'direct-sym':
+            x = scipy.linalg.solve(A, b, assume_a='sym', check_finite=False)
+        elif method == 'direct-spd':
+            x = scipy.linalg.solve(A, b, assume_a='pos', check_finite=False)
+        elif method == 'direct-sparse':
+            x = scipy.sparse.linalg.spsolve(scipy.sparse.csr_matrix(A), b)
+            # x = spsolve(scipy.sparse.csr_matrix(A), b)
+            # try:
+            #     x = self.pypardiso_solver(b)
+            # except:
+            #     self.pypardiso_solver = factorized(scipy.sparse.csr_matrix(A))
+            #     x = self.pypardiso_solver(b)
+        elif method == 'direct-cholesky':
             try:
                 L = np.linalg.cholesky(A)
                 y = np.linalg.solve(L, b)
@@ -27,12 +61,17 @@ class LinearSolver:
                 x = np.linalg.solve(A, b)
             # L, lower = cho_factor(A, lower=True)
             # x = cho_solve((L, lower), b)
-        elif method == 'CG':
+        elif method == 'iterative-cg1':
             x = self.CG_linsol(A, b, x0=x0)
+        elif method == 'iterative-cg2':
+            # x = self.CG_linsol(A, b, x0=x0)
+            x, exit_code = scipy.sparse.linalg.cg(A, b, x0=x0, atol=self.cg_tol, maxiter=self.cg_max_iters)
+        elif method == 'iterative-gmres':
+            x, exit_code = scipy.sparse.linalg.gmres(A, b, x0=x0, atol=self.cg_tol, maxiter=self.cg_max_iters)
         # elif method == 'BFGS':
         #     H, x = self.BFGS_linsol(A, b, last_Ainv=A_inv_guess, x0=x0)
         else:
-            raise ValueError(f"Unsupported linear solver method: {method}. Choose from direct-LU/direct-Cholesky/CG.")
+            raise ValueError(f"Unsupported linear solver method: {method}. Choose from direct-{{lu,sym,spd,sparse,cholesky}} / iterative-{{cg1,cg2,gmres}}.")
         return x
     
     def CG_linsol(self, A, b, x0=None):

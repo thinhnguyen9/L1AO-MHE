@@ -39,6 +39,7 @@ def main(
         mhe_horizon=10,
         mhe_update="filtering",
         prior_method="ekf",
+        mhe_shooting="single",
         zero_measurement_noise=False,
         zero_process_noise=False,
         time_varying_measurement_noise=False,
@@ -63,7 +64,7 @@ def main(
         lmhe3_interior_point_slack=None,
         xmin=None,
         xmax=None,
-        linear_solver="direct-LU"
+        linear_solver="direct-lu"
     ):
     
     # ----------------------- Quadrotor -----------------------
@@ -104,7 +105,8 @@ def main(
     print(f"Use Q,R guesses    : " + str(use_QR_guess))
     print("======================= MHE settings ======================")
     print(f"Horizon            : {mhe_horizon:.0f}")
-    print("MHE scheme         : " + mhe_update)
+    print("MHE formulation    : " + mhe_update + ", " + mhe_shooting + "-shooting")
+    print("State constraints  : " + ("yes" if (xmin is not None or xmax is not None) else "no"))
     print("Prior weighting    : " + prior_method)
     print("Linear solver      : " + linear_solver)
 
@@ -184,6 +186,7 @@ def main(
                 P0              = P0,
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
+                mhe_shooting    = mhe_shooting,
                 prior_method    = prior_method,
                 solver          = lmhe1_solver,
                 xs              = xhover_est,
@@ -195,6 +198,8 @@ def main(
             lmhe2_pcip_obj = PCIPQP(
                 alpha               = lmhe2_pcip_alpha,
                 ts                  = ts,
+                model               = drone_est,
+                shooting_method     = mhe_shooting,
                 enable_prediction   = lmhe2_pcip_prediction,
                 interior_point_barrier = lmhe2_interior_point_barrier,
                 interior_point_slack   = lmhe2_interior_point_slack,
@@ -208,6 +213,7 @@ def main(
                 P0              = P0,
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
+                mhe_shooting    = mhe_shooting,
                 prior_method    = prior_method,
                 solver          = "pcip",
                 xs              = xhover_est,
@@ -220,6 +226,8 @@ def main(
             lmhe3_pcip_obj = PCIPQP(
                 alpha               = lmhe3_pcip_alpha,
                 ts                  = ts,
+                model               = drone_est,
+                shooting_method     = mhe_shooting,
                 enable_prediction   = lmhe3_pcip_prediction,
                 interior_point_barrier = lmhe3_interior_point_barrier,
                 interior_point_slack   = lmhe3_interior_point_slack,
@@ -234,6 +242,7 @@ def main(
                 P0              = P0,
                 mhe_type        = "linearized_every",
                 mhe_update      = mhe_update,
+                mhe_shooting    = mhe_shooting,
                 prior_method    = prior_method,
                 solver          = "pcip",
                 xs              = xhover_est,

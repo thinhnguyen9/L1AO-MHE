@@ -1,5 +1,5 @@
 {
-    "scenario"                          : "basic case, filtering MHE (faster/simpler), benchmark solver times purpose",
+    "scenario"                          : "basic case, filtering MHE (faster/simpler), benchmark solver times for single-shooting MHE",
     "description"                       : "",
     "------------------ Basic settings" : "---------------------------------------------------------------------------------",
     "enabled_estimators"                : ["EKF", "LMHE1", "LMHE2", "LMHE3"],
@@ -28,6 +28,7 @@
     "P0"                                : [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],
     "mhe_horizon"                       : 10,
     "mhe_update"                        : "filtering",
+    "mhe_shooting"                      : "single",
     "prior_method"                      : "ekf",
     "lmhe1_solver"                      : "osqp",
     "lmhe2_pcip_alpha"                  : 20.0,
@@ -42,7 +43,7 @@
     "lmhe3_interior_point_slack"        : [0.0, 0.0],
     "xmin"                              : [-1.0, -1.0, -0.5, -5.0, -5.0, -2.0, -1.57, -1.57, -0.52, -50.0, -50.0, -20.0],
     "xmax"                              : [ 1.0,  1.0,  0.5,  5.0,  5.0,  2.0,  1.57,  1.57,  0.52,  50.0,  50.0,  20.0],
-    "linear_solver"                     : "CG",
+    "linear_solver"                     : "iterative-cg1",
     "------------ Corner case settings" : "---------------------------------------------------------------------------------",
     "time_varying_measurement_noise"    : false,
     "bad_model_knowledge"               : false,
