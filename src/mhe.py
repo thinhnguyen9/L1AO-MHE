@@ -315,8 +315,10 @@ class MHE():
                         l1ao_zdot0            = self.l1ao_zdot0
                         l1ao_sigma_hat0       = self.l1ao_sigma_hat0
                         l1ao_nabla_z_phi_hat0 = self.l1ao_nabla_z_phi_hat0
-                        
-            t0 = time.perf_counter()
+            
+            # ------------------------------------------------------- #
+            # Solver time: clock starts at problem setup, ends after 
+            #              solution is assigned to z.
             # ------------------------ CVXPY ------------------------ #
             if self.solver == "cvxpy":
                 constraints = []
@@ -326,10 +328,11 @@ class MHE():
                     z = cp.Variable(((2*N+1)*self.Nx,))     # z = [x(0)...x(T), w(0)...w(T-1)]
                     if N > 0:
                         constraints.append(A_eq @ z == b_eq)
-                
                 cost = 0.5 * cp.quad_form(z, cp.psd_wrap(H)) + f @ z
                 if self.has_inequality_constraints:
                     constraints.append(np.vstack((-A_ineq, A_ineq)) @ z <= np.hstack((-zmin, zmax)))
+
+                t0 = time.perf_counter()
                 prob = cp.Problem(cp.Minimize(cost), constraints)
                 # prob.solve(solver=cp.OSQP, warm_start=True)
                 # prob.solve(solver=cp.ECOS, feastol=1e-04, reltol=1e-6, abstol=1e-3, verbose=True)
@@ -343,61 +346,73 @@ class MHE():
                 # Result
                 # xvec = z.value[0:(N+1)*self.Nx].reshape((N+1, self.Nx))
                 z = z.value
+                t1 = time.perf_counter()
             
             # ------------------------ OSQP ------------------------ #
-            elif self.solver == "osqp": # TODO: same tolerances for all solvers?
-                prob = osqp.OSQP()
+            elif self.solver == "osqp":
+                QP = {}
+                QP['P'] = sparse.csc_matrix(H)
+                QP['q'] = f
                 if self.mhe_shooting == "single":
-                    prob.setup(
-                        P=sparse.csc_matrix(H),
-                        q=f,
-                        A=sparse.csc_matrix(A_ineq) if self.has_inequality_constraints else None,
-                        l=zmin if self.has_inequality_constraints else None,
-                        u=zmax if self.has_inequality_constraints else None,
-                        eps_abs=1e-6, eps_rel=1e-6, max_iter=4000, polish=False, warm_start=True, verbose=False
-                    )
-                    prob.warm_start(x=z0)
+                    QP['A'] = sparse.csc_matrix(A_ineq) if self.has_inequality_constraints else None
+                    QP['l'] = zmin if self.has_inequality_constraints else None
+                    QP['u'] = zmax if self.has_inequality_constraints else None
                 elif self.mhe_shooting == "multiple":
-                    prob.setup(
-                        P=sparse.csc_matrix(H),
-                        q=f,
-                        A=sparse.csc_matrix(np.vstack((A_eq, A_ineq))) if self.has_inequality_constraints else sparse.csc_matrix(A_eq),
-                        l=np.hstack((b_eq, zmin)) if self.has_inequality_constraints else b_eq,
-                        u=np.hstack((b_eq, zmax)) if self.has_inequality_constraints else b_eq,
-                        eps_abs=1e-6, eps_rel=1e-6, max_iter=4000, polish=False, warm_start=True, verbose=False
-                    )
-                    prob.warm_start(x=z0[:(2*N+1)*self.Nx])   # exclude Lagrange multipliers
+                    QP['A'] = sparse.csc_matrix(np.vstack((A_eq, A_ineq))) if self.has_inequality_constraints else sparse.csc_matrix(A_eq)
+                    QP['l'] = np.hstack((b_eq, zmin)) if self.has_inequality_constraints else b_eq
+                    QP['u'] = np.hstack((b_eq, zmax)) if self.has_inequality_constraints else b_eq
+
+                t0 = time.perf_counter()
+                prob = osqp.OSQP()
+                prob.setup(
+                    P=QP['P'], q=QP['q'], A=QP['A'], l=QP['l'], u=QP['u'],
+                    eps_abs=1e-6, eps_rel=1e-6, max_iter=4000, polish=False, warm_start=True, verbose=False
+                )
+                if self.mhe_shooting == "single":       prob.warm_start(x=z0)
+                elif self.mhe_shooting == "multiple":   prob.warm_start(x=z0[:(2*N+1)*self.Nx])  # exclude Lagrange multipliers
                 res = prob.solve()
                 if res.info.status != 'solved':
                     raise ValueError('OSQP did not solve the problem! Time step: ' + str(T))
                 z = res.x
+                t1 = time.perf_counter()
 
             # ------------------------ CVXOPT ------------------------ #
             elif self.solver == "cvxopt":
-                sol = cvxopt.solvers.qp(
-                    P=cvxopt.matrix(H),
-                    q=cvxopt.matrix(f),
-                    G=cvxopt.matrix(np.vstack((-A_ineq, A_ineq))) if self.has_inequality_constraints else None,
-                    h=cvxopt.matrix(np.hstack((-zmin, zmax))) if self.has_inequality_constraints else None,
-                    A=cvxopt.matrix(A_eq) if self.mhe_shooting=="multiple" else None,
-                    b=cvxopt.matrix(b_eq) if self.mhe_shooting=="multiple" else None,
-                    # TODO: warm starting only 'x' is even slower. Try all variables.
-                    # initvals={'x': cvxopt.matrix(z0[:(2*N+1)*self.Nx])} if self.mhe_shooting=="multiple" else {'x': cvxopt.matrix(z0)}
-                )
+                QP = {
+                    'P': cvxopt.matrix(H),
+                    'q': cvxopt.matrix(f),
+                    'G': cvxopt.matrix(np.vstack((-A_ineq, A_ineq))) if self.has_inequality_constraints else None,
+                    'h': cvxopt.matrix(np.hstack((-zmin, zmax))) if self.has_inequality_constraints else None,
+                    'A': cvxopt.matrix(A_eq) if self.mhe_shooting=="multiple" else None,
+                    'b': cvxopt.matrix(b_eq) if self.mhe_shooting=="multiple" else None
+                }
+                t0 = time.perf_counter()
+                sol = cvxopt.solvers.qp(P=QP['P'], q=QP['q'], G=QP['G'], h=QP['h'], A=QP['A'], b=QP['b'])
+                # TODO: warm starting only 'x' is even slower. Try all variables.
+                # initvals={'x': cvxopt.matrix(z0[:(2*N+1)*self.Nx])} if self.mhe_shooting=="multiple" else {'x': cvxopt.matrix(z0)}
                 z = np.array(sol['x']).flatten()
+                t1 = time.perf_counter()
             
             # ------------------------ PCIP ------------------------ #
             elif self.solver == "pcip":
-                self.pcip.set_QP(
-                    H=H,
-                    f=f,
-                    A=A_eq if self.mhe_shooting=="multiple" else None,
-                    b=b_eq if self.mhe_shooting=="multiple" else None,
-                    G=np.vstack((-A_ineq, A_ineq)) if self.has_inequality_constraints else None,
-                    h=np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None,
-                    # sparse_matrices=True if self.mhe_shooting=="multiple" else False   # TODO
-                    t=tvec[-1]
-                )
+                QP = {}
+                if self.mhe_shooting == "single":
+                    QP['P'] = H
+                    QP['q'] = f
+                    QP['A'] = None
+                    QP['b'] = None
+                    QP['G'] = np.vstack((-A_ineq, A_ineq)) if self.has_inequality_constraints else None
+                    QP['h'] = np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None
+                elif self.mhe_shooting == "multiple":
+                    QP['P'] = sparse.csc_matrix(H)
+                    QP['q'] = f
+                    QP['A'] = sparse.csc_matrix(A_eq)
+                    QP['b'] = b_eq
+                    QP['G'] = sparse.csc_matrix(np.vstack((-A_ineq, A_ineq))) if self.has_inequality_constraints else None
+                    QP['h'] = np.hstack((-zmin, zmax)) if self.has_inequality_constraints else None
+
+                t0 = time.perf_counter()
+                self.pcip.set_QP(H=QP['P'], f=QP['q'], A=QP['A'], b=QP['b'], G=QP['G'], h=QP['h'], t=tvec[-1])
                 zdot, z, l1ao_zdot, l1ao_sigma_hat, l1ao_nabla_z_phi_hat = self.pcip.dynamics(
                     z0                    = z0,
                     z0_unextended         = self.z0 if T>0 else z0,
@@ -407,6 +422,7 @@ class MHE():
                     l1ao_sigma_hat0       = l1ao_sigma_hat0 if self.pcip.enable_l1ao else None,
                     l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat0 if self.pcip.enable_l1ao else None
                 )
+                t1 = time.perf_counter()
                 
                 # Save for next time step: z(T+1), zdot(T)
                 self.pcip_zdot0 = zdot
@@ -415,7 +431,6 @@ class MHE():
                 self.l1ao_nabla_z_phi_hat0 = l1ao_nabla_z_phi_hat
 
             # ------------------------ Linear MHE result ------------------------ #
-            t1 = time.perf_counter()
             self._solver_times.append(t1 - t0)
             self.z0 = z
             if self.mhe_shooting == "single":
@@ -564,3 +579,6 @@ class MHE():
             return 0.0
         else:
             return np.mean(self._solver_times[start_idx:])
+    
+    def get_solver_times(self, start_idx=0):
+        return self._solver_times[start_idx:]

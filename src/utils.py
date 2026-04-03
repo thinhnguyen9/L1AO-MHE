@@ -178,3 +178,30 @@ def rmse(x_true, x_est):
     err = x_true - x_est    # N x nx
     rmse_val = np.sqrt(np.mean(np.sum(err**2, axis=1)))
     return rmse_val
+
+def remove_outliers_iqr(data):
+    """
+    data: 1D numpy array
+    """
+    if data.size < 4:
+        return data
+    q1, q3 = np.percentile(data, [25, 75])
+    iqr = q3 - q1
+    if iqr <= 0:
+        return data
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    filtered = data[(data >= lower) & (data <= upper)]
+    return filtered if filtered.size > 0 else data
+
+def summarize_statistics(data):
+    """
+    data: 1D numpy array
+    """
+    return {
+        'mean': np.mean(data),
+        'median': np.median(data),
+        'std': np.std(data),
+        'min': np.min(data),
+        'max': np.max(data),
+    }

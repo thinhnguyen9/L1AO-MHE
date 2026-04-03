@@ -19,7 +19,7 @@ from models.quadrotors import Quadrotor2
 from src.simulator import Simulator
 from src.pcip import PCIPQP
 from src.l1ao import L1AOQP
-from src.utils import rmse
+from src.utils import rmse, remove_outliers_iqr, summarize_statistics
 
 def main(
         enabled_estimators,
@@ -67,7 +67,7 @@ def main(
         linear_solver="direct-lu"
     ):
     
-    # ----------------------- Quadrotor -----------------------
+    # ----------------------- Quadrotor ----------------------- #
     drone = Quadrotor2(
         m                           = 1.0,
         g                           = 9.81,
@@ -89,7 +89,7 @@ def main(
     xhover_est = np.zeros(drone_est.Nx)
     uhover_est = np.array([drone_est.m*drone_est.g, 0, 0, 0])
 
-    # ----------------------- Simulation -----------------------
+    # ----------------------- Simulation ----------------------- #
     if Q is not None and R is not None:
         use_QR_guess = True
     else:
@@ -130,7 +130,7 @@ def main(
     rng = np.random.default_rng(88)
     run_id = uuid.uuid4().hex[:8]
 
-    # ----------------------- Run estimation -----------------------
+    # ----------------------- Run estimation ----------------------- #
     for loop in range(loops):
         print("================ Simulation instance " + str(loop+1) + " of " + str(loops) + " ================")
 
@@ -161,6 +161,9 @@ def main(
         # # x0 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2*np.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
         
         # Initialize estimators - must be done every loop
+        enabled_estimators = [est for est in enabled_estimators if est in ['KF', 'EKF', 'LMHE1', 'LMHE2', 'LMHE3']]
+        estimator_objs = {}
+        estimator_labels = {}
         if 'KF' in enabled_estimators:
             SKF = KF(
                 model   = drone_est,
@@ -170,6 +173,8 @@ def main(
                 xs      = xhover_est,
                 us      = uhover_est
             )
+            estimator_objs['KF'] = SKF
+            estimator_labels['KF'] = "KF"
         if 'EKF' in enabled_estimators:
             EKF = KF(
                 model   = drone_est,
@@ -177,6 +182,8 @@ def main(
                 P0      = P0,
                 type    = "extended"
             )
+            estimator_objs['EKF'] = EKF
+            estimator_labels['EKF'] = "EKF"
         if 'LMHE1' in enabled_estimators:
             lmhe1_obj = MHE(
                 model           = drone_est,
@@ -194,6 +201,8 @@ def main(
                 xmin            = xmin,
                 xmax            = xmax
             )
+            estimator_objs['LMHE1'] = lmhe1_obj
+            estimator_labels['LMHE1'] = "MHE (" + lmhe1_solver.upper() + ")"
         if 'LMHE2' in enabled_estimators:
             lmhe2_pcip_obj = PCIPQP(
                 alpha               = lmhe2_pcip_alpha,
@@ -222,6 +231,8 @@ def main(
                 xmin            = xmin,
                 xmax            = xmax
             )
+            estimator_objs['LMHE2'] = lmhe2_obj
+            estimator_labels['LMHE2'] = "MHE (PCIP)"
         if 'LMHE3' in enabled_estimators:
             lmhe3_pcip_obj = PCIPQP(
                 alpha               = lmhe3_pcip_alpha,
@@ -251,68 +262,108 @@ def main(
                 xmin            = xmin,
                 xmax            = xmax
             )
+            estimator_objs['LMHE3'] = lmhe3_obj
+            estimator_labels['LMHE3'] = "MHE (PCIP+L1AO)"
 
+        # Start estimation
+        def run_estimator(estimator):
+
+            # Obtain estimation
+            xhat, total_time = sim.run_estimation(estimator, xhover_est)
+            estimation_rmse = rmse(xvec[t0:], xhat[t0:])
+            if keep_initial_guess:
+                xhat[0] = xhover_est.copy()
+            
+            # Compute norm(estimation error) for each time step
+            norm_err = np.linalg.norm(xvec-xhat, axis=1)
+
+            # Compute solver times statistics: from t0 onwards, and remove outliers with IQR method (only for MHE)
+            if type(estimator).__name__ == "MHE":
+                solver_times = np.array(estimator.get_solver_times(t0)) * 1000
+                solver_times = remove_outliers_iqr(solver_times)
+            else:
+                solver_times = np.zeros(1)
+            solver_time_stats = summarize_statistics(solver_times)
+            
+            return {
+                "xhat": xhat,
+                "rmse": estimation_rmse,
+                "norm_err": norm_err,
+                "total_time": total_time,
+                "solver_times": solver_times,
+                "solver_time_stats": solver_time_stats
+            }
+        
         N = len(tvec)
-        if 'KF' in enabled_estimators:
-            xhat_kf, kf_time = sim.run_estimation(SKF, xhover_est)
-            rmse_kf = rmse(xvec[t0:], xhat_kf[t0:])
-            if keep_initial_guess: xhat_kf[0] = xhover_est.copy()
-        if 'EKF' in enabled_estimators:
-            xhat_ekf, ekf_time = sim.run_estimation(EKF, xhover_est)
-            rmse_ekf = rmse(xvec[t0:], xhat_ekf[t0:])
-            if keep_initial_guess: xhat_ekf[0] = xhover_est.copy()
-        if 'LMHE1' in enabled_estimators:
-            xhat_lmhe1, lmhe1_time = sim.run_estimation(lmhe1_obj, xhover_est)
-            rmse_lmhe1 = rmse(xvec[t0:], xhat_lmhe1[t0:])
-            if keep_initial_guess: xhat_lmhe1[0] = xhover_est.copy()
-        if 'LMHE2' in enabled_estimators:
-            xhat_lmhe2, lmhe2_time = sim.run_estimation(lmhe2_obj, xhover_est)
-            rmse_lmhe2 = rmse(xvec[t0:], xhat_lmhe2[t0:])
-            if keep_initial_guess: xhat_lmhe2[0] = xhover_est.copy()
-        if 'LMHE3' in enabled_estimators:
-            xhat_lmhe3, lmhe3_time = sim.run_estimation(lmhe3_obj, xhover_est)
-            rmse_lmhe3 = rmse(xvec[t0:], xhat_lmhe3[t0:])
-            if keep_initial_guess: xhat_lmhe3[0] = xhover_est.copy()
+        results = {}
+        for estimator_name in enabled_estimators:
+            results[estimator_name] = run_estimator(estimator_objs[estimator_name])
 
-        print(f"(k={t0:.0f} onwards)        RMSE            MHE step (ms)    Solver (ms)")
-        if 'KF' in enabled_estimators:      print(f"KF                : {rmse_kf:.4f}\t\t{kf_time*1000./N:.4f}")
-        if 'EKF' in enabled_estimators:     print(f"EKF               : {rmse_ekf:.4f}\t\t{ekf_time*1000./N:.4f}")
-        if 'LMHE1' in enabled_estimators:
-            spaces = " " * (10 - len(lmhe1_solver))
-            print("LMHE1 (" + lmhe1_solver.upper() + ")" + spaces + f": {rmse_lmhe1:.4f}\t\t{lmhe1_time*1000./N:.4f}\t\t{lmhe1_obj.get_mean_solver_time(t0)*1000:.4f}")
-        if 'LMHE2' in enabled_estimators:   print(f"LMHE2 (PCIP)      : {rmse_lmhe2:.4f}\t\t{lmhe2_time*1000./N:.4f}\t\t{lmhe2_obj.get_mean_solver_time(t0)*1000:.4f}")
-        if 'LMHE3' in enabled_estimators:   print(f"LMHE3 (PCIP+L1AO) : {rmse_lmhe3:.4f}\t\t{lmhe3_time*1000./N:.4f}\t\t{lmhe3_obj.get_mean_solver_time(t0)*1000:.4f}")
-        # if 'EKF' in enabled_estimators and 'LMHE1' in enabled_estimators:
-        #     print("----------------------------")
-        #     print(f"LMHE1-EKF RMSE: {np.sqrt(np.mean((xhat_lmhe1 - xhat_ekf)**2)):.4f}")
+        # Print RMSE & MHE times
+        print(f"(k={t0:.0f} onwards)".ljust(15) + f" {'RMSE':>15} {'MHE step [ms]':>15} {'Solver [ms]':>15}")
+        print("--------------------------------------------------------------")
+        for estimator_name in enabled_estimators:
+            print(
+                f"{estimator_labels[estimator_name]:<15}"
+                f" {results[estimator_name]['rmse']:15.4f}"
+                f" {results[estimator_name]['total_time']*1000./N:15.4f}"
+                f" {results[estimator_name]['solver_time_stats']['mean']:15.4f}"
+            )
 
+        # # Print MHE solver times
+        # print("------------------------------- MHE solver times -------------------------------")
+        # print(f"{'MHE':<15} {'Mean [ms]':>12} {'Median [ms]':>12} {'Std [ms]':>12} {'Min [ms]':>12} {'Max [ms]':>12}")
+        # print("--------------------------------------------------------------------------------")
+        # for estimator_name in enabled_estimators:
+        #     print(
+        #         f"{estimator_labels[estimator_name]:<15}"
+        #         f" {results[estimator_name]['solver_time_stats']['mean']:12.4f}"
+        #         f" {results[estimator_name]['solver_time_stats']['median']:12.4f}"
+        #         f" {results[estimator_name]['solver_time_stats']['std']:12.4f}"
+        #         f" {results[estimator_name]['solver_time_stats']['min']:12.4f}"
+        #         f" {results[estimator_name]['solver_time_stats']['max']:12.4f}"
+        #     )
+
+        # # Print solver times breakdown for PCIP/L1AO
         # if 'LMHE2' in enabled_estimators:   lmhe2_pcip_obj.print_computation_times(t0)
         # if 'LMHE3' in enabled_estimators:   lmhe3_pcip_obj.print_computation_times(t0)
 
         # Save results of this instance
         if save_csv_simulation_instance:
             data = []
-            if 'KF' in enabled_estimators:      data.append([run_id, loop+1, 'KF',    rmse_kf,    np.max(np.abs(xvec-xhat_kf)),    kf_time*1000./N,    T, ts, t0])
-            if 'EKF' in enabled_estimators:     data.append([run_id, loop+1, 'EKF',   rmse_ekf,   np.max(np.abs(xvec-xhat_ekf)),   ekf_time*1000./N,   T, ts, t0])
-            if 'LMHE1' in enabled_estimators:   data.append([run_id, loop+1, 'LMHE1', rmse_lmhe1, np.max(np.abs(xvec-xhat_lmhe1)), lmhe1_time*1000./N, T, ts, t0])
-            if 'LMHE2' in enabled_estimators:   data.append([run_id, loop+1, 'LMHE2', rmse_lmhe2, np.max(np.abs(xvec-xhat_lmhe2)), lmhe2_time*1000./N, T, ts, t0])
-            if 'LMHE3' in enabled_estimators:   data.append([run_id, loop+1, 'LMHE3', rmse_lmhe3, np.max(np.abs(xvec-xhat_lmhe3)), lmhe3_time*1000./N, T, ts, t0])
+            for estimator_name in enabled_estimators:
+                data.append([
+                    run_id,
+                    loop + 1,
+                    T,
+                    ts,
+                    t0,
+                    estimator_labels[estimator_name],
+                    linear_solver if estimator_name in ['LMHE2', 'LMHE3'] else (lmhe1_solver if estimator_name=='LMHE1' else None),
+                    results[estimator_name]['rmse'],
+                    np.max(results[estimator_name]['norm_err'][t0:]),
+                    mhe_shooting + "-shooting, " + mhe_update if estimator_name.startswith('LMHE') else None,
+                    mhe_horizon if estimator_name.startswith('LMHE') else None,
+                    results[estimator_name]['solver_time_stats']['mean'],
+                    results[estimator_name]['solver_time_stats']['median'],
+                    results[estimator_name]['solver_time_stats']['std'],
+                    results[estimator_name]['solver_time_stats']['min'],
+                    results[estimator_name]['solver_time_stats']['max']
+                ])
             file_path = os.path.join(os.path.dirname(__file__), 'data/simulation_instances.csv')
             write_header = not os.path.exists(file_path)
             with open(file_path, 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if write_header:
-                    writer.writerow(['run_id','loop','estimator','RMSE','max_err','computation_time_per_step','T','ts','rmse_start'])
+                    writer.writerow([
+                        'run_id', 'loop', 'T', 'ts', 'stats_start_step', 'estimator', 'solver',
+                        'RMSE', 'max_norm_err', 'MHE_scheme', 'MHE_horizon', 'mean_solver_time',
+                        'median_solver_time', 'std_solver_time', 'min_solver_time', 'max_solver_time'
+                    ])
                 writer.writerows(data)
         
         # Write raw data (norm(x-xhat)) to csv
         if save_csv_estimation_error:
-            if 'KF'    in enabled_estimators:   err_kf    = np.linalg.norm(xvec - xhat_kf,    axis=1)
-            if 'EKF'   in enabled_estimators:   err_ekf   = np.linalg.norm(xvec - xhat_ekf,   axis=1)
-            if 'LMHE1' in enabled_estimators:   err_lmhe1 = np.linalg.norm(xvec - xhat_lmhe1, axis=1)
-            if 'LMHE2' in enabled_estimators:   err_lmhe2 = np.linalg.norm(xvec - xhat_lmhe2, axis=1)
-            if 'LMHE3' in enabled_estimators:   err_lmhe3 = np.linalg.norm(xvec - xhat_lmhe3, axis=1)
-
             file_path = os.path.join(os.path.dirname(__file__), 'data/estimation_error.csv')
             write_header = not os.path.exists(file_path)
             with open(file_path, 'a', newline='') as csvfile:
@@ -321,14 +372,18 @@ def main(
                     writer.writerow(['run_id','loop','estimator','T','time','estimation_error_norm'])
                 for i in range(N):
                     t = float(tvec[i])
-                    if 'KF'    in enabled_estimators:   writer.writerow([run_id, loop+1, 'KF',    T, f"{t:.2f}", f"{err_kf[i]:.6f}"])
-                    if 'EKF'   in enabled_estimators:   writer.writerow([run_id, loop+1, 'EKF',   T, f"{t:.2f}", f"{err_ekf[i]:.6f}"])
-                    if 'LMHE1' in enabled_estimators:   writer.writerow([run_id, loop+1, 'LMHE1', T, f"{t:.2f}", f"{err_lmhe1[i]:.6f}"])
-                    if 'LMHE2' in enabled_estimators:   writer.writerow([run_id, loop+1, 'LMHE2', T, f"{t:.2f}", f"{err_lmhe2[i]:.6f}"])
-                    if 'LMHE3' in enabled_estimators:   writer.writerow([run_id, loop+1, 'LMHE3', T, f"{t:.2f}", f"{err_lmhe3[i]:.6f}"])
+                    for estimator_name in enabled_estimators:
+                        writer.writerow([
+                            run_id,
+                            loop + 1,
+                            estimator_labels[estimator_name],
+                            T,
+                            f"{t:.2f}",
+                            f"{results[estimator_name]['norm_err'][i]:.6f}"
+                        ])
             print("Data written to " + file_path)
     print("============================================================")
-    xhat = xhat_ekf if 'EKF' in enabled_estimators else np.zeros_like(xvec)
+    xhat = results['EKF']['xhat'] if 'EKF' in enabled_estimators else np.zeros_like(xvec)
     with open('simulation/quadrotor2/sim_data.npy', 'wb') as f:
         np.save(f, tvec)
         np.save(f, xvec)
@@ -341,11 +396,11 @@ def main(
     # ----------------------- Plot results -----------------------
     if enable_plot:
         
-        if 'KF' in enabled_estimators:      rmse_kf     = np.sqrt(np.mean((xvec - xhat_kf)**2, axis=0))
-        if 'EKF' in enabled_estimators:     rmse_ekf    = np.sqrt(np.mean((xvec - xhat_ekf)**2, axis=0))
-        if 'LMHE1' in enabled_estimators:   rmse_lmhe1  = np.sqrt(np.mean((xvec - xhat_lmhe1)**2, axis=0))
-        if 'LMHE2' in enabled_estimators:   rmse_lmhe2  = np.sqrt(np.mean((xvec - xhat_lmhe2)**2, axis=0))
-        if 'LMHE3' in enabled_estimators:   rmse_lmhe3  = np.sqrt(np.mean((xvec - xhat_lmhe3)**2, axis=0))
+        if 'KF' in enabled_estimators:      rmse_kf     = np.sqrt(np.mean((xvec - results['KF']['xhat'])**2,    axis=0))
+        if 'EKF' in enabled_estimators:     rmse_ekf    = np.sqrt(np.mean((xvec - results['EKF']['xhat'])**2,   axis=0))
+        if 'LMHE1' in enabled_estimators:   rmse_lmhe1  = np.sqrt(np.mean((xvec - results['LMHE1']['xhat'])**2, axis=0))
+        if 'LMHE2' in enabled_estimators:   rmse_lmhe2  = np.sqrt(np.mean((xvec - results['LMHE2']['xhat'])**2, axis=0))
+        if 'LMHE3' in enabled_estimators:   rmse_lmhe3  = np.sqrt(np.mean((xvec - results['LMHE3']['xhat'])**2, axis=0))
 
         def plot_state(idx, ylabel=None, invert_y=False, rad2deg=False, title_prefix=''):
             plt.plot(tvec, xvec[:,idx]*(180/np.pi if rad2deg else 1), 'k-', lw=3., label=title_prefix+'_true')
@@ -353,16 +408,16 @@ def main(
                 plt.plot(tvec, yvec[:,idx]*(180/np.pi if rad2deg else 1), 'k:', lw=0.5, label=title_prefix+'_meas')
             if idx in [9, 10, 11]:
                 plt.plot(tvec, yvec[:,idx-6]*(180/np.pi if rad2deg else 1), 'k:', lw=0.5, label=title_prefix+'_meas')
-            if 'KF' in enabled_estimators:
-                plt.plot(tvec, xhat_kf[:,idx]*(180/np.pi if rad2deg else 1), 'r-', lw=1., label='KF')
-            if 'EKF' in enabled_estimators:
-                plt.plot(tvec, xhat_ekf[:,idx]*(180/np.pi if rad2deg else 1), color='tab:red', ls='-', lw=1.5, label='EKF')
-            if 'LMHE1' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe1[:,idx]*(180/np.pi if rad2deg else 1), color='tab:blue', ls='-', lw=1.5, label=f"MHE ({lmhe1_solver.upper()})")
-            if 'LMHE2' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe2[:,idx]*(180/np.pi if rad2deg else 1), color='tab:orange', ls='-', lw=1.5, label="MHE (PCIP)")
-            if 'LMHE3' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe3[:,idx]*(180/np.pi if rad2deg else 1), color='tab:green', ls='-', lw=1.5, label="MHE (PCIP+L1AO)")
+            colors = {'KF': 'r', 'EKF': 'tab:red', 'LMHE1': 'tab:blue', 'LMHE2': 'tab:orange', 'LMHE3': 'tab:green'}
+            for estimator_name in enabled_estimators:
+                plt.plot(
+                    tvec,
+                    results[estimator_name]['xhat'][:,idx]*(180/np.pi if rad2deg else 1),
+                    color=colors[estimator_name],
+                    ls='-',
+                    lw=1.5,
+                    label=estimator_labels[estimator_name]
+                )
             plt.grid()
             # plt.ylim((-2,2))
             leg = plt.legend()
@@ -432,15 +487,15 @@ def main(
 
         def plot_error(idx, ylabel=None, title_prefix=''):
             if 'KF' in enabled_estimators:
-                plt.plot(tvec, xvec[:,idx]-xhat_kf[:,idx], 'r-', lw=1., label='KF')
+                plt.plot(tvec, xvec[:,idx]-results['KF']['xhat'][:,idx], 'r-', lw=1., label='KF')
             if 'EKF' in enabled_estimators:
-                plt.plot(tvec, xvec[:,idx]-xhat_ekf[:,idx], 'b-', lw=1., label='EKF')
+                plt.plot(tvec, xvec[:,idx]-results['EKF']['xhat'][:,idx], 'b-', lw=1., label='EKF')
             if 'LMHE1' in enabled_estimators:
-                plt.plot(tvec, xvec[:,idx]-xhat_lmhe1[:,idx], 'm-', lw=1., label='LMHE1')
+                plt.plot(tvec, xvec[:,idx]-results['LMHE1']['xhat'][:,idx], 'm-', lw=1., label='LMHE1')
             if 'LMHE2' in enabled_estimators:
-                plt.plot(tvec, xvec[:,idx]-xhat_lmhe2[:,idx], 'c-', lw=1., label='LMHE2')
+                plt.plot(tvec, xvec[:,idx]-results['LMHE2']['xhat'][:,idx], 'c-', lw=1., label='LMHE2')
             if 'EKF' in enabled_estimators and 'LMHE2' in enabled_estimators:
-                plt.plot(tvec, xhat_lmhe2[:,idx]-xhat_ekf[:,idx], 'k--', lw=1., label='LMHE2-EKF')
+                plt.plot(tvec, results['LMHE2']['xhat'][:,idx]-results['EKF']['xhat'][:,idx], 'k--', lw=1., label='LMHE2-EKF')
             plt.grid()
             leg = plt.legend()
             leg.set_draggable(True)
@@ -456,10 +511,10 @@ def main(
         if 'EKF' in enabled_estimators:
             plt.figure(4)
             # plt.suptitle('Estimation error')
-            err_ekf   = np.linalg.norm(xvec - xhat_ekf, axis=1)
-            if 'LMHE1' in enabled_estimators:   err_lmhe1 = np.linalg.norm(xvec - xhat_lmhe1, axis=1)
-            if 'LMHE2' in enabled_estimators:   err_lmhe2 = np.linalg.norm(xvec - xhat_lmhe2, axis=1)
-            if 'LMHE3' in enabled_estimators:   err_lmhe3 = np.linalg.norm(xvec - xhat_lmhe3, axis=1)
+            err_ekf   = np.linalg.norm(xvec - results['EKF']['xhat'], axis=1)
+            if 'LMHE1' in enabled_estimators:   err_lmhe1 = np.linalg.norm(xvec - results['LMHE1']['xhat'], axis=1)
+            if 'LMHE2' in enabled_estimators:   err_lmhe2 = np.linalg.norm(xvec - results['LMHE2']['xhat'], axis=1)
+            if 'LMHE3' in enabled_estimators:   err_lmhe3 = np.linalg.norm(xvec - results['LMHE3']['xhat'], axis=1)
 
             plt.subplot(211)
             plt.title('Estimation error')

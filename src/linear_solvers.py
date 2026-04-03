@@ -15,7 +15,7 @@ class LinearSolver:
         self.bfgs_max_iters = max_iters
         self.bfgs_tol = tol     # tol for Ax - b
     
-    def solve(self, A, b, method='direct-lu', x0=None, A_inv_guess=None):
+    def solve(self, A, b, method='direct-lu', x0=None, reuse_factorization=False):
         """
         Solve Ax=b.
 
@@ -45,8 +45,10 @@ class LinearSolver:
         elif method == 'direct-spd':
             x = scipy.linalg.solve(A, b, assume_a='pos', check_finite=False)
         elif method == 'direct-sparse':
-            x = scipy.sparse.linalg.spsolve(scipy.sparse.csr_matrix(A), b)
-            # x = spsolve(scipy.sparse.csr_matrix(A), b)
+            if not reuse_factorization or not hasattr(self, 'sparseLU'):
+                self.sparseLU = scipy.sparse.linalg.splu(A)
+            x = self.sparseLU.solve(b)
+            # x = scipy.sparse.linalg.spsolve(scipy.sparse.csr_matrix(A), b)
             # try:
             #     x = self.pypardiso_solver(b)
             # except:

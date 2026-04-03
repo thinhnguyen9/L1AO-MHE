@@ -2,6 +2,8 @@ import numpy as np
 # from scipy.linalg import cho_factor, cho_solve
 import time
 from src.linear_solvers import LinearSolver
+from scipy import sparse
+from src.utils import remove_outliers_iqr, summarize_statistics
 
 def saturate(val, lower_bound, upper_bound):
     return max(lower_bound, min(upper_bound, val))
@@ -12,6 +14,7 @@ class PCIPQP:
         minimize    0.5 z'Hz + f'z
         subject to  Az = b
                     Gz <= h
+    If shooting_method=="multiple", assume all matrices are sparse CSC/CSR!
     """
     def __init__(
             self, alpha, ts,
@@ -68,9 +71,8 @@ class PCIPQP:
             self._last_sigma_hat = None
 
             # As: diagonal Hurwitz matrix (assume As = diag([a, a, ..., a]), a<0)
-            self.a = l1ao_augmentation['a']
-            self.u = self.a / (np.exp(-self.a*self.ts) - 1.)
-            self.dim = 0
+            self.As = l1ao_augmentation['a']    # no need to form diag matrix! Save computation time
+            self.mu = self.As / (np.exp(-self.As*self.ts) - 1.)
 
             # Low-pass filter
             self.lpf_omega = l1ao_augmentation['lpf_omega']
@@ -197,40 +199,28 @@ class PCIPQP:
             c, s, _, _ = self.get_params(t)
             slack = s - (G@x - h)
             inv_slack_sq = 1.0 / (slack**2)
-            if self.shooting_method == "single":
-                # ----------- Method 1 ----------- #
-                # nabla_zz_B = (1./c) * G.T @ np.diag(1./(slack**2)) @ G    # 50% slower than method 2
-                # ----------- Method 2 ----------- #
-                weighted_G = inv_slack_sq[:, None] * G
-                nabla_zz_B = (1./c) * (G.T @ weighted_G)
-                nabla_zz_phi = nabla_zz_phi + nabla_zz_B
-            elif self.shooting_method == "multiple":
-                # ----------- Method 3 ----------- #
-                # Multiple-shooting w/ very sparse G = (-I 0; I 0). 2-4x faster than method 2
-                # Nx = 12
-                # N = int((slack.shape[0] / (2*Nx)) - 1)
-                # temp = (1./c) * (inv_slack_sq[ : (N+1)*Nx] + inv_slack_sq[(N+1)*Nx : ])
-                # nabla_zz_B = np.block([
-                #     [np.diag(temp),                 np.zeros(((N+1)*Nx, N*Nx))  ],
-                #     [np.zeros((N*Nx, (N+1)*Nx)),    np.zeros((N*Nx, N*Nx))      ]
-                # ])
-                # nabla_zz_B[:(N+1)*Nx, :(N+1)*Nx] = np.diag(temp)
-                p = int(slack.shape[0] / 2)
-                temp = (1./c) * (inv_slack_sq[:p] + inv_slack_sq[p:])
-                # nabla_zz_B = np.zeros((H.shape[0], H.shape[0]))
-                for i, val in enumerate(temp):
-                    # nabla_zz_B[i, i] = val
-                    nabla_zz_phi[i, i] += val
+            weighted_G = G.multiply(inv_slack_sq[:,None]) if hasattr(G, "multiply") else inv_slack_sq[:,None]*G
+            nabla_zz_B = (1./c) * (G.T @ weighted_G)
+            nabla_zz_phi = nabla_zz_phi + nabla_zz_B
+            # if self.shooting_method == "single":
+            #     # ----------- Method 1 ----------- #
+            #     # nabla_zz_B = (1./c) * G.T @ np.diag(1./(slack**2)) @ G    # 50% slower than method 2
+            #     # ----------- Method 2 ----------- #
+            #     weighted_G = inv_slack_sq[:, None] * G
+            # elif self.shooting_method == "multiple":
+            #     # ----------- Method 3 ----------- #
+            #     # Multiple-shooting w/ very sparse G = (-I 0; I 0). 2-4x faster than method 2
+            #     # p = int(slack.shape[0] / 2)
+            #     # temp = (1./c) * (inv_slack_sq[:p] + inv_slack_sq[p:])
+            #     # # nabla_zz_B = np.zeros((H.shape[0], H.shape[0]))
+            #     # for i, val in enumerate(temp):
+            #     #     # nabla_zz_B[i, i] = val
+            #     #     nabla_zz_phi[i, i] += val
         if self.has_equality_constraints:
-            # nabla_zz_phi = np.block([
-            #     [nabla_zz_phi,  A.T               ],
-            #     [A,             np.zeros((Nl, Nl))]
-            # ])
-            nabla_zz_phi_temp = np.zeros((H.shape[0] + A.shape[0], H.shape[0] + A.shape[0]))
-            nabla_zz_phi_temp[:H.shape[0], :H.shape[0]] = nabla_zz_phi
-            nabla_zz_phi_temp[:H.shape[0], H.shape[0]:] = A.T
-            nabla_zz_phi_temp[H.shape[0]:, :H.shape[0]] = A
-            nabla_zz_phi = nabla_zz_phi_temp
+            nabla_zz_phi = sparse.bmat([
+                [nabla_zz_phi,  A.T],
+                [A,             None]
+            ], format="csc")
         t1 = time.perf_counter()                # uncomment to record computation time
         self._hessian_times.append(t1 - t0)     # uncomment to record computation time
         return nabla_zz_phi
@@ -342,18 +332,15 @@ class PCIPQP:
         l1ao_sigma_hat = None
         l1ao_nabla_z_phi_hat = None
         if self.enable_l1ao:
-            Nz = z0.shape[0]
-            if Nz != self.dim:
-                self._l1ao_dimension_update(Nz)   # Update As, mu
-
             e = l1ao_nabla_z_phi_hat0 - nabla_z_phi0    # e(T). (self._l1ao_nabla_z_phi_hat0 - grad_phi) gives worse result
-            h = self.mu @ e                 # h(T)
+            h = self.mu * e                             # h(T)
             t3 = time.perf_counter()            # uncomment to record computation time
             l1ao_sigma_hat = self.linear_solver.solve(  # sigma_hat(T)
                 A      = nabla_zz_phi,
                 b      = h,
                 method = self.linear_solver_method,
-                x0     = l1ao_sigma_hat0
+                x0     = l1ao_sigma_hat0,
+                reuse_factorization = True
             )
             t4 = time.perf_counter()            # uncomment to record computation time
             l1ao_zdot = self._l1ao_lpf(l1ao_zdot0, -l1ao_sigma_hat)  # za_dot(T)
@@ -363,18 +350,12 @@ class PCIPQP:
             zdot += l1ao_zdot
 
             # Gradient prediction: grad_phi_hat(T+1)
-            l1ao_nabla_z_phi_hat = l1ao_nabla_z_phi_hat0 + (self.As@e + prediction + nabla_zz_phi@zdot + h)*self.ts
+            l1ao_nabla_z_phi_hat = l1ao_nabla_z_phi_hat0 + (self.As*e + prediction + nabla_zz_phi@zdot + h)*self.ts
 
             total_linsol_time += t4 - t3        # uncomment to record computation time
         # ----------------------------------------------------------- #
 
         # %% Finishing
-        # print("-----------------------------------")
-        # print(f"Gradient time:      {(t1-t0)*1000:.2f} ms")
-        # print(f"Hessian time:       {(t2-t1)*1000:.2f} ms")
-        # print(f"Prediction time:    {(t3-t2)*1000:.2f} ms")
-        # print(f"Linear solver time: {(t5-t4)*1000:.2f} ms")
-        # print(f"Total time:         {(t5-t0)*1000:.2f} ms")
         self._linear_solver_times.append(total_linsol_time)     # uncomment to record computation time
 
         self._last_zdot = zdot.copy()
@@ -383,36 +364,6 @@ class PCIPQP:
         t5 = time.perf_counter()                    # uncomment to record computation time
         self._total_solver_times.append(t5 - t0)    # uncomment to record computation time
         return zdot, z, l1ao_zdot, l1ao_sigma_hat, l1ao_nabla_z_phi_hat
-    
-    def print_computation_times(self, start_idx=0):
-        gradient_time = np.mean(self._gradient_times[start_idx:])*1000
-        hessian_time = np.mean(self._hessian_times[start_idx:])*1000
-        linsol_time = np.mean(self._linear_solver_times[start_idx:])*1000
-        total_time = np.mean(self._total_solver_times[start_idx:])*1000
-        if self.enable_l1ao: print("------- PCIP+L1AO computation times -----------------")
-        else:                print("------- PCIP computation times ----------------------")
-        print(f"Mean gradient time:      {gradient_time:.4f} ms\t({gradient_time/total_time*100:.0f}%)")
-        print(f"Mean Hessian time:       {hessian_time:.4f} ms\t({hessian_time/total_time*100:.0f}%)")
-        print(f"Mean linear solver time: {linsol_time:.4f} ms\t({linsol_time/total_time*100:.0f}%)")
-        print(f"Mean total solver time:  {total_time:.4f} ms\t({total_time/total_time*100:.0f}%)")
-
-    # %% L1AO augmentation methods %%
-    def _l1ao_dimension_update(self, dim):
-        """
-        mu = inv(inv(As)*(I - expm(As*Ts)))*expm(As*Ts)
-        Below implementation is only true for diagonal As
-        For the MHE problem: dim is continuously growing until it reaches the horizon length
-        """
-        self.As = np.diag([self.a]*dim)
-        self.mu = np.diag([self.u]*dim)
-        self.dim = dim
-
-    def _l1ao_lpf(self, x0, u):
-        """
-        C(s) = omega / (s + omega)
-        xdot = -omega*x + omega*u
-        """
-        return x0 + self.lpf_omega*(u - x0)*self.ts
     
     def growing_horizon_extend_variables(self, z_old, z_new):
         """
@@ -434,3 +385,47 @@ class PCIPQP:
                 z_old[(2*N1+1)*self.Nx :                 ],   # l(0)...l(N-1)
                 z_new[        -self.Nx :                 ]    # l(N-1)
             ))
+    
+    def print_computation_times(self, start_idx=0):
+        gradient_times = np.array(self._gradient_times[start_idx:]) * 1000
+        hessian_times = np.array(self._hessian_times[start_idx:]) * 1000
+        linsol_times = np.array(self._linear_solver_times[start_idx:]) * 1000
+        total_times = np.array(self._total_solver_times[start_idx:]) * 1000
+
+        gradient_times = remove_outliers_iqr(gradient_times)
+        hessian_times = remove_outliers_iqr(hessian_times)
+        linsol_times = remove_outliers_iqr(linsol_times)
+        total_times = remove_outliers_iqr(total_times)
+
+        gradient_stats = summarize_statistics(gradient_times)
+        hessian_stats = summarize_statistics(hessian_times)
+        linsol_stats = summarize_statistics(linsol_times)
+        total_stats = summarize_statistics(total_times)
+
+        if self.enable_l1ao: print("------------------------------- PCIP+L1AO computation time breakdown -------------------------------")
+        else:                print("--------------------------------- PCIP computation time breakdown ----------------------------------")
+        print(f"{'Metric':<22} {'Mean [ms]':>12} {'% Total':>12} {'Median [ms]':>12} {'Std [ms]':>12} {'Min [ms]':>12} {'Max [ms]':>12}")
+        print("-" * 100)
+        for label, stats in [
+            ('Gradient time', gradient_stats),
+            ('Hessian time', hessian_stats),
+            ('Linear solver time', linsol_stats),
+            ('Total solver time', total_stats),
+        ]:
+            print(
+                f"{label:<22}"
+                f" {stats['mean']:12.4f}"
+                f" {stats['mean'] / total_stats['mean'] * 100.0:10.1f}%"
+                f" {stats['median']:12.4f}"
+                f" {stats['std']:12.4f}"
+                f" {stats['min']:12.4f}"
+                f" {stats['max']:12.4f}"
+            )
+
+    # %% L1AO augmentation methods %%
+    def _l1ao_lpf(self, x0, u):
+        """
+        C(s) = omega / (s + omega)
+        xdot = -omega*x + omega*u
+        """
+        return x0 + self.lpf_omega*(u - x0)*self.ts
