@@ -10,27 +10,27 @@ import os
 plt.rcParams.update({
     "text.usetex": True,
     "font.family": "serif",
-    "font.serif": ["Computer Modern Roman"],
+    "font.serif": ["Computer Modern"],
     "mathtext.fontset": "cm",
     "font.size": 12,
     "axes.titlesize": 14,
     "axes.labelsize": 12,
     "legend.fontsize": 10,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
     "figure.dpi": 150
 })
 
 DEFAULT_LABEL_MAP = {
-    "EKF": "EKF",
-    "MHE (OSQP N=10)": "MHE (OSQP, $N=10$)",
-    "MHE (OSQP N=20)": "MHE (OSQP, $N=20$)",
-    "MHE (OSQP N=50)": "MHE (OSQP, $N=50$)",
-    "MHE (OSQP N=100)": "MHE (OSQP, $N=100$)",
-    "MHE (Newton+L1AO N=10)": "MHE ($\mathcal{L}_1$-AO, $N=10$)",
-    "MHE (Newton+L1AO N=20)": "MHE ($\mathcal{L}_1$-AO, $N=20$)",
-    "MHE (Newton+L1AO N=50)": "MHE ($\mathcal{L}_1$-AO, $N=50$)",
-    "MHE (Newton+L1AO N=100)": "MHE ($\mathcal{L}_1$-AO, $N=100$)",
+    # "EKF": "EKF",
+    # "MHE (OSQP N=10)": "MHE (OSQP, $N=10$)",
+    # "MHE (OSQP N=20)": "MHE (OSQP, $N=20$)",
+    # "MHE (OSQP N=50)": "MHE (OSQP, $N=50$)",
+    # "MHE (OSQP N=100)": "MHE (OSQP, $N=100$)",
+    # "MHE (Newton+L1AO N=10)": "MHE ($\mathcal{L}_1$-AO, $N=10$)",
+    # "MHE (Newton+L1AO N=20)": "MHE ($\mathcal{L}_1$-AO, $N=20$)",
+    # "MHE (Newton+L1AO N=50)": "MHE ($\mathcal{L}_1$-AO, $N=50$)",
+    # "MHE (Newton+L1AO N=100)": "MHE ($\mathcal{L}_1$-AO, $N=100$)",
     "MHE (CVXOPT N=10)": "MHE ($N=10$, CVXOPT)",
     "MHE (CVXOPT N=20)": "MHE ($N=20$, CVXOPT)",
     "MHE (CVXOPT N=40)": "MHE ($N=40$, CVXOPT)",
@@ -44,24 +44,36 @@ DEFAULT_LABEL_MAP = {
 
 DEFAULT_COLORS = {
     "EKF": "tab:red",
-    "MHE (OSQP N=10)": "tab:blue", 
-    "MHE (OSQP N=100)": "tab:green",
-    "MHE (Newton+L1AO N=10)": "tab:orange",
-    "MHE (Newton+L1AO N=100)": "magenta",
-    "MHE (CVXOPT N=10)": "tab:cyan", 
-    "MHE (CVXOPT N=40)": "tab:olive",
+    # "MHE (OSQP N=10)": "tab:blue", 
+    # "MHE (OSQP N=100)": "tab:green",
+    # "MHE (Newton+L1AO N=10)": "tab:orange",
+    # "MHE (Newton+L1AO N=100)": "magenta",
+    # "MHE (CVXOPT N=10)": "tab:cyan", 
+    # "MHE (CVXOPT N=40)": "tab:olive",
+    # "MHE (PCIP N=10)": "tab:orange", 
+    # "MHE (PCIP N=40)": "tab:green",
+    # "MHE (PCIP+L1AO N=10)": "tab:blue",
+    # "MHE (PCIP+L1AO N=40)": "magenta",
+    "MHE (CVXOPT N=10)": "tab:blue", 
+    "MHE (CVXOPT N=40)": "blue",
     "MHE (PCIP N=10)": "tab:orange", 
-    "MHE (PCIP N=40)": "tab:green",
-    "MHE (PCIP+L1AO N=10)": "tab:blue",
-    "MHE (PCIP+L1AO N=40)": "magenta",
+    "MHE (PCIP N=40)": "magenta",
+    "MHE (PCIP+L1AO N=10)": "tab:green",
+    "MHE (PCIP+L1AO N=40)": "black",
 }
 
 DEFAULT_MARKERS = {
     "EKF": "o",
-    "MHE (OSQP N=10)": "^", 
-    "MHE (OSQP N=100)": "s",
-    "MHE (Newton+L1AO N=10)": "x",
-    "MHE (Newton+L1AO N=100)": "v"
+    # "MHE (OSQP N=10)": "^", 
+    # "MHE (OSQP N=100)": "s",
+    # "MHE (Newton+L1AO N=10)": "x",
+    # "MHE (Newton+L1AO N=100)": "v"
+    "MHE (CVXOPT N=10)"     : "^", 
+    "MHE (CVXOPT N=40)"     : "^",
+    "MHE (PCIP N=10)"       : "s", 
+    "MHE (PCIP N=40)"       : "s",
+    "MHE (PCIP+L1AO N=10)"  : "d",
+    "MHE (PCIP+L1AO N=40)"  : "d",
 }
 
 DEFAULT_LINES = {
@@ -76,6 +88,8 @@ DEFAULT_LINES = {
     "MHE (PCIP N=40)": "solid",
     "MHE (PCIP+L1AO N=10)": (0, (5, 10)),
     "MHE (PCIP+L1AO N=40)": (0, (5, 10)),
+    # "MHE (PCIP+L1AO N=10)": "solid",
+    # "MHE (PCIP+L1AO N=40)": "solid",
 }
 
 DEFAULT_LINEWEIGHT = {
@@ -98,9 +112,8 @@ def plot_csv(
     estimators_filter=None,
     ylog=False,
     usemarker=False,
-    markevery=20,
-    markersize=6,
-    figsize=(10,6)
+    figsize=(10,6),
+    inset_rect=(0.08, 0.08, 0.52, 0.52)
 ):
     csv_path = Path(csv_path)
     if not csv_path.exists():
@@ -167,14 +180,14 @@ def plot_csv(
                 color=color,
                 linestyle=linestyle,
                 marker=marker if usemarker else None,
-                markevery=markevery,
-                markersize=markersize
+                markevery=50,
+                markersize=4
             )
     
         # ---------------- inset: zoom t = 10..15 s ----------------
     zoom_t0, zoom_t1 = 20.0, 25.0
-    # make inset in upper-right of the axes (x, y, width, height in axes coords)
-    axins = ax.inset_axes([0.1, 0.1, 0.4, 0.4])
+    # inset_rect = (x0, y0, width, height) in main-axes coordinates
+    axins = ax.inset_axes(inset_rect)
     # collect y-values in zoom window so we can set reasonable y-limits
     y_zoom_vals = []
     for i, est in enumerate(estimators):
@@ -196,8 +209,8 @@ def plot_csv(
                 linestyle=linestyle,
                 linewidth=lw,
                 marker=marker if usemarker else None,
-                markevery=markevery,
-                markersize=markersize,
+                markevery=10,
+                markersize=4,
                 alpha=1.0
             )
             y_zoom_vals.append(seq_zoom['estimation_error_norm'].values)
@@ -208,7 +221,9 @@ def plot_csv(
         ymin, ymax = yall.min(), yall.max()
         pad = max(1e-6, 0.05*(ymax - ymin) if (ymax - ymin) > 0 else 0.1 * max(1.0, ymax))
         axins.set_ylim(max(0.0, ymin - pad), ymax + pad)
-    axins.grid(True, linestyle='--', linewidth=0.4)
+    # axins.grid(True, linestyle='--', linewidth=0.4)
+    axins.grid(axis="y", which="major", color="black", linestyle="-", linewidth=0.4, alpha=0.3, zorder=0)
+    axins.grid(axis="x", which="major", color="black", linestyle="-", linewidth=0.4, alpha=0.3, zorder=0)
     axins.tick_params(axis='both', which='major', labelsize=8)
     # indicate the zoomed region on the main axes
     try:
@@ -223,9 +238,12 @@ def plot_csv(
     # axins.set_yscale('log')
     # ---------------- end inset ----------------
 
-    ax.set_xlabel('Time (s)')
-    ax.set_ylabel(r'$\|x - \hat{x}\|$')
-    ax.grid(which='both', linestyle='--', linewidth=0.4)
+    ax.set_xlabel('Time (s)', fontsize=12)
+    ax.set_ylabel(r'$\|x - \hat{x}\|$', fontsize=14)
+    # ax.grid(which='both', linestyle='--', linewidth=0.4)
+    plt.grid(axis="y", which="major", color="black", linestyle="-", linewidth=0.6, alpha=0.4, zorder=0)
+    plt.grid(axis="y", which="minor", color="black", linestyle="-", linewidth=0.4, alpha=0.2, zorder=0)
+    plt.grid(axis="x", which="major", color="black", linestyle="-", linewidth=0.6, alpha=0.2, zorder=0)
     # ax.set_xlim((df['time'].min(), df['time'].max()))
     ax.set_xlim((0.0, 30.0))
     ax.set_ylim((0., df['estimation_error_norm'].max()*1.2))
@@ -273,10 +291,9 @@ def main():
             "MHE (PCIP+L1AO N=40)",
         ],
         ylog=True,
-        # usemarker=True,
-        markevery=100,
-        markersize=3,
-        figsize=(9,5)
+        usemarker=True,
+        figsize=(9,5),
+        inset_rect=(0.08, 0.08, 0.5, 0.5) # (x0, y0, width, height) in main-axes coordinates
     )
 
 if __name__ == "__main__":

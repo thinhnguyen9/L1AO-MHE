@@ -22,7 +22,7 @@ def load_scenario_json(fname):
 if __name__ == "__main__":
 
     # ====================================================== #
-    scenario_json_name = "scenarios/compare_solvers.json"
+    scenario_json_name = "scenarios/scenario2.json"
     # ====================================================== #
     
     scen_file = os.path.join(os.path.dirname(__file__), scenario_json_name)

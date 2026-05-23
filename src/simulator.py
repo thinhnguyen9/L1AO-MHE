@@ -441,7 +441,7 @@ class Simulator():
         except Exception as e:
             print(estimator_class + " failed! Returning NaN...")
             print(f"Error: {e}")
-            xhat.fill(np.nan)
+            xhat[i:].fill(np.nan)
         elapsed_time = time.perf_counter() - t0
         return xhat, elapsed_time
 

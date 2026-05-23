@@ -386,13 +386,25 @@ class MHE():
                     'A': cvxopt.matrix(A_eq) if self.mhe_shooting=="multiple" else None,
                     'b': cvxopt.matrix(b_eq) if self.mhe_shooting=="multiple" else None
                 }
+                # initvals = {}
+                # initvals={'x': cvxopt.matrix(z0[:(2*N+1)*self.Nx])} if self.mhe_shooting=="multiple" else {'x': cvxopt.matrix(z0)}
+                # if hasattr(self, 'prev_x'):
+                #     initvals['x'] = self.prev_x
+                #     initvals['s'] = self.prev_s
+                #     initvals['z'] = self.prev_z
+                #     initvals['y'] = self.prev_y
+                
                 t0 = time.perf_counter()
                 sol = cvxopt.solvers.qp(P=QP['P'], q=QP['q'], G=QP['G'], h=QP['h'], A=QP['A'], b=QP['b'])
-                # TODO: warm starting only 'x' is even slower. Try all variables.
-                # initvals={'x': cvxopt.matrix(z0[:(2*N+1)*self.Nx])} if self.mhe_shooting=="multiple" else {'x': cvxopt.matrix(z0)}
                 z = np.array(sol['x']).flatten()
                 t1 = time.perf_counter()
-            
+
+                # if T >= self.N:
+                #     self.prev_x = sol['x']
+                #     self.prev_s = sol['s']
+                #     self.prev_z = sol['z']
+                #     self.prev_y = sol['y']
+
             # ------------------------ PCIP ------------------------ #
             elif self.solver == "pcip":
                 QP = {}

@@ -3,7 +3,7 @@
     "description"                       : "PCIP+L1AO > CVXPY, but Newton+L1AO = CVXPY",
     "------------------ Basic settings" : "---------------------------------------------------------------------------------",
     "enabled_estimators"                : ["EKF", "LMHE1", "LMHE2", "LMHE3"],
-    "T"                                 : 10.0,
+    "T"                                 : 30.0,
     "t0"                                : 0.0,
     "ts"                                : 0.01,
     "loops"                             : 1,

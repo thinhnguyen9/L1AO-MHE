@@ -282,7 +282,7 @@ def main(
                 solver_times = np.array(estimator.get_solver_times(t0)) * 1000
                 solver_times = remove_outliers_iqr(solver_times)
             else:
-                solver_times = np.zeros(1)
+                solver_times = total_time*1000./N * np.ones(N)
             solver_time_stats = summarize_statistics(solver_times)
             
             return {
@@ -383,13 +383,15 @@ def main(
                         ])
             print("Data written to " + file_path)
     print("============================================================")
-    xhat = results['EKF']['xhat'] if 'EKF' in enabled_estimators else np.zeros_like(xvec)
     with open('simulation/quadrotor2/sim_data.npy', 'wb') as f:
         np.save(f, tvec)
         np.save(f, xvec)
-        np.save(f, xhat)
         np.save(f, yvec)
         np.save(f, uvec)
+        if 'EKF'   in enabled_estimators:   np.save(f, results['EKF']['xhat'])
+        if 'LMHE1' in enabled_estimators:   np.save(f, results['LMHE1']['xhat'])
+        if 'LMHE2' in enabled_estimators:   np.save(f, results['LMHE2']['xhat'])
+        if 'LMHE3' in enabled_estimators:   np.save(f, results['LMHE3']['xhat'])
     print("Simulation data saved to 'sim_data.npy'")
     print("\n")
 
